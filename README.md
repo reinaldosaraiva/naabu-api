@@ -139,6 +139,180 @@ A API detecta automaticamente as seguintes vulnerabilidades:
 | **PPTP** | 1723 | VPN legacy vulnerável |
 | **rsync** | 873 | Módulos públicos acessíveis |
 
+## 🎯 Testando os 6 Requisitos do Épico
+
+### Requisito 1: API aceita IPs, Hostnames e CIDRs
+
+```bash
+# Teste com IP
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["8.8.8.8"], "ports": "53,443"}'
+
+# Teste com Hostname
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["google.com"], "ports": "80,443"}'
+
+# Teste com CIDR
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["192.168.1.0/24"], "ports": "22,80"}'
+
+# Teste misto (IP + Hostname + CIDR)
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["8.8.8.8", "example.com", "10.0.0.0/30"], "ports": "80,443"}'
+```
+
+### Requisito 2: Sistema de Worker Pools
+
+```bash
+# Verificar pools ativos nas métricas
+curl http://localhost:8082/metrics | jq '.'
+
+# Ver logs dos workers em ação
+docker compose logs -f | grep -E "(worker|pool|dispatcher)"
+
+# Criar múltiplos jobs para ver workers paralelos
+for i in {1..5}; do
+  curl -X POST http://localhost:8082/scan \
+    -H "Content-Type: application/json" \
+    -d "{\"ips\": [\"192.168.1.$i\"], \"ports\": \"80\"}" &
+done
+```
+
+### Requisito 3: Resultados com Detecção de Vulnerabilidades
+
+```bash
+# 1. Criar scan com probes habilitados
+SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["scanme.nmap.org"],
+    "ports": "21,22,80,389,873,1723,3389,5900",
+    "enable_probes": true
+  }' | jq -r '.scan_id')
+
+echo "Scan ID: $SCAN_ID"
+
+# 2. Aguardar 30 segundos
+sleep 30
+
+# 3. Ver resultados detalhados
+curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq '{
+  status: .status,
+  ports_found: .results.results[0].ports,
+  vulnerabilities: .probe_results[] | select(.is_vulnerable == true)
+}'
+```
+
+### Requisito 4: Deep Scan Automático com Nmap
+
+```bash
+# 1. Scan em alvo com vulnerabilidade conhecida
+SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["testphp.vulnweb.com"],
+    "ports": "21,80,443",
+    "enable_probes": true,
+    "enable_deep_scan": true
+  }' | jq -r '.scan_id')
+
+# 2. Aguardar processamento
+sleep 60
+
+# 3. Ver deep scan results
+curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq '.deep_scans'
+```
+
+### Requisito 5: Artefatos XML do Nmap
+
+```bash
+# Continuar do scan anterior ou criar novo
+curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq -r '.deep_scans[0].xml_output' > nmap_output.xml
+
+# Ver scripts NSE executados
+curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq '.deep_scans[0].nse_scripts'
+
+# Validar XML
+xmllint --noout nmap_output.xml && echo "XML válido!"
+```
+
+### Requisito 6: Todos os 6 Probes Funcionando
+
+```bash
+# Criar arquivo com alvos de teste para cada probe
+cat > test_all_probes.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Testando todos os 6 probes ==="
+
+# FTP Probe (porta 21)
+echo -e "\n1. Testando FTP..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["ftp.debian.org"], "ports": "21", "enable_probes": true}'
+
+# VNC Probe (porta 5900)
+echo -e "\n2. Testando VNC..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["192.168.1.100"], "ports": "5900-5910", "enable_probes": true}'
+
+# RDP Probe (porta 3389)  
+echo -e "\n3. Testando RDP..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["192.168.1.10"], "ports": "3389", "enable_probes": true}'
+
+# LDAP Probe (porta 389)
+echo -e "\n4. Testando LDAP..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["ldap.forumsys.com"], "ports": "389", "enable_probes": true}'
+
+# PPTP Probe (porta 1723)
+echo -e "\n5. Testando PPTP..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["192.168.1.1"], "ports": "1723", "enable_probes": true}'
+
+# rsync Probe (porta 873)
+echo -e "\n6. Testando rsync..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["rsync.samba.org"], "ports": "873", "enable_probes": true}'
+
+echo -e "\n\nTodos os scans criados! Use 'curl http://localhost:8082/api/v1/jobs' para ver status"
+EOF
+
+chmod +x test_all_probes.sh
+./test_all_probes.sh
+```
+
+### Verificando Resultados Completos
+
+```bash
+# Listar todos os jobs para pegar IDs
+curl -s http://localhost:8082/api/v1/jobs | jq -r '.jobs[] | "\(.scan_id) - \(.status)"'
+
+# Ver resumo de vulnerabilidades encontradas
+for job in $(curl -s http://localhost:8082/api/v1/jobs | jq -r '.jobs[].scan_id'); do
+  echo "=== Job: $job ==="
+  curl -s http://localhost:8082/api/v1/jobs/$job | jq '{
+    status: .status,
+    vulnerabilities: [.probe_results[] | select(.is_vulnerable == true) | {
+      host: .host,
+      port: .port,
+      probe: .probe_type,
+      evidence: .evidence
+    }]
+  }'
+done
+```
+
 ## 📊 Formato de Resposta
 
 ### Resposta de Scan Criado
