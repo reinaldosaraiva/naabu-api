@@ -5,18 +5,36 @@ services:
     build: .
     container_name: naabu-api
     ports:
-      - "8081:8080"
+      - "8082:8080"
     restart: unless-stopped
     environment:
       - ENV=production
+      - DB_DRIVER=sqlite
+      - DB_NAME=/data/naabu_api.db
+      - LOG_LEVEL=info
+      - QUICK_SCAN_WORKERS=5
+      - PROBE_WORKERS=10
+      - DEEP_SCAN_WORKERS=3
+      - NAABU_RATE_LIMIT=1000
+      - NAABU_THREADS=25
+    volumes:
+      - naabu_data:/data
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     networks:
       - naabu-net
+    # Security capabilities for raw socket access (naabu requirement)
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+volumes:
+  naabu_data:
+    driver: local
 
 networks:
   naabu-net:

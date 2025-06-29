@@ -38,8 +38,8 @@ func (p *LDAPProbe) IsRelevantPort(port int) bool {
 	return port == 389 || port == 636 || port == 3268 || port == 3269
 }
 
-func (p *LDAPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult, error) {
-	result := &ProbeResult{}
+func (p *LDAPProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
+	result := &models.ProbeResult{}
 	
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
@@ -174,12 +174,9 @@ func (p *LDAPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResul
 		serviceVersion = "LDAP (Plain)"
 	}
 
-	result.ServiceInfo = &models.ServiceInfo{
-		Type:       "ldap",
-		Version:    serviceVersion,
-		Banner:     fmt.Sprintf("LDAP on port %d", port),
-		Confidence: 0.90,
-	}
+	result.ServiceName = "ldap"
+	result.ServiceVersion = serviceVersion
+	result.Banner = fmt.Sprintf("LDAP on port %d", port)
 
 	return result, nil
 }

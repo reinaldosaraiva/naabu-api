@@ -2,7 +2,6 @@ package probes
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -22,8 +21,8 @@ type Manager struct {
 func NewManager(logger *zap.Logger) *Manager {
 	return &Manager{
 		probes: []Probe{
-			NewFTPProbe(),
-			NewVNCProbe(),
+			NewFTPProbe(logger),
+			NewVNCProbe(logger),
 			NewRDPProbe(),
 			NewLDAPProbe(),
 			NewPPTPProbe(),
@@ -43,7 +42,7 @@ type ProbeTarget struct {
 type ProbeResultWithTarget struct {
 	Target ProbeTarget
 	Probe  string
-	Result *ProbeResult
+	Result *models.ProbeResult
 	Error  error
 }
 
@@ -169,23 +168,15 @@ func (m *Manager) ConvertToModelProbeResults(scanID uuid.UUID, results []ProbeRe
 
 		probeType := models.ProbeType(result.Probe)
 		modelResult := models.ProbeResult{
-			ScanID:       scanID,
-			IP:           result.Target.IP,
-			Port:         result.Target.Port,
-			ProbeType:    probeType,
-			IsVulnerable: result.Result.IsVulnerable,
-			Evidence:     result.Result.Evidence,
-		}
-
-		// Convert service info to JSON string if available
-		if result.Result.ServiceInfo != nil {
-			serviceInfoJSON := fmt.Sprintf(`{"type":"%s","version":"%s","banner":"%s","confidence":%f}`,
-				result.Result.ServiceInfo.Type,
-				result.Result.ServiceInfo.Version,
-				result.Result.ServiceInfo.Banner,
-				result.Result.ServiceInfo.Confidence,
-			)
-			modelResult.ServiceInfo = serviceInfoJSON
+			ScanID:         scanID,
+			Host:           result.Target.IP,
+			Port:           result.Target.Port,
+			ProbeType:      probeType,
+			ServiceName:    result.Result.ServiceName,
+			ServiceVersion: result.Result.ServiceVersion,
+			IsVulnerable:   result.Result.IsVulnerable,
+			Evidence:       result.Result.Evidence,
+			Banner:         result.Result.Banner,
 		}
 
 		modelResults = append(modelResults, modelResult)

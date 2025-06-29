@@ -39,8 +39,8 @@ func (p *PPTPProbe) IsRelevantPort(port int) bool {
 	return port == 1723
 }
 
-func (p *PPTPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult, error) {
-	result := &ProbeResult{}
+func (p *PPTPProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
+	result := &models.ProbeResult{}
 	
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
@@ -150,12 +150,9 @@ func (p *PPTPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResul
 	}
 
 	// Extract service information
-	result.ServiceInfo = &models.ServiceInfo{
-		Type:       "pptp",
-		Version:    "PPTP VPN",
-		Banner:     fmt.Sprintf("PPTP/1.0 (Magic: %x)", magicCookie),
-		Confidence: 0.95,
-	}
+	result.ServiceName = "pptp"
+	result.ServiceVersion = "PPTP VPN"
+	result.Banner = fmt.Sprintf("PPTP/1.0 (Magic: %x)", magicCookie)
 
 	return result, nil
 }

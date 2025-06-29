@@ -37,8 +37,8 @@ func (p *RDPProbe) IsRelevantPort(port int) bool {
 	return port == 3389
 }
 
-func (p *RDPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult, error) {
-	result := &ProbeResult{}
+func (p *RDPProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
+	result := &models.ProbeResult{}
 	
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
@@ -143,12 +143,9 @@ func (p *RDPProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult
 	}
 
 	// Extract service information
-	result.ServiceInfo = &models.ServiceInfo{
-		Type:       "rdp",
-		Version:    protocolDetected,
-		Banner:     fmt.Sprintf("RDP/%s", encryptionLevel),
-		Confidence: 0.90,
-	}
+	result.ServiceName = "rdp"
+	result.ServiceVersion = protocolDetected
+	result.Banner = fmt.Sprintf("RDP/%s", encryptionLevel)
 
 	return result, nil
 }

@@ -1,0 +1,396 @@
+openapi: 3.0.3
+info:
+  title: Naabu API - Descoberta de Exposições de Serviço
+  description: |
+    API para descoberta e validação de exposições de serviço em larga escala.
+    
+    ## Funcionalidades
+    - Port scanning com Naabu
+    - Detecção de vulnerabilidades com 6 probes especializados
+    - Deep scanning automático com Nmap NSE
+    - Suporte a IPs, hostnames e notação CIDR
+    
+    ## Probes Disponíveis
+    - **FTP**: Detecta servidores com login anônimo
+    - **VNC**: Identifica VNC sem autenticação
+    - **RDP**: Detecta RDP com criptografia fraca
+    - **LDAP**: Identifica LDAP com bind anônimo
+    - **PPTP**: Detecta VPN legacy vulnerável
+    - **rsync**: Identifica módulos rsync acessíveis
+  version: 2.0.0
+  contact:
+    name: API Support
+    email: support@naabu-api.local
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8082
+    description: Local development server
+  - url: http://localhost:8080
+    description: Docker container
+
+paths:
+  /scan:
+    post:
+      summary: Criar novo job de scan
+      description: |
+        Inicia um novo job de scan assíncrono. O scan será executado em background
+        através do sistema de worker pools.
+      operationId: createScanJob
+      tags:
+        - Scanning
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanRequest'
+            examples:
+              single-ip:
+                summary: Scan de IP único
+                value:
+                  ips: ["192.168.1.1"]
+                  ports: "80,443,22"
+                  enable_probes: true
+                  enable_deep_scan: true
+              hostname:
+                summary: Scan de hostname
+                value:
+                  ips: ["example.com"]
+                  ports: "80,443"
+                  enable_probes: true
+                  enable_deep_scan: false
+              cidr:
+                summary: Scan de rede CIDR
+                value:
+                  ips: ["192.168.1.0/24"]
+                  ports: "22,3389"
+                  enable_probes: true
+                  enable_deep_scan: true
+              multiple:
+                summary: Múltiplos alvos
+                value:
+                  ips: ["8.8.8.8", "google.com", "10.0.0.0/30"]
+                  ports: "53,80,443"
+                  enable_probes: true
+                  enable_deep_scan: true
+      responses:
+        '202':
+          description: Job criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncScanResponse'
+              example:
+                scan_id: "550e8400-e29b-41d4-a716-446655440000"
+                status: "queued"
+                message: "Job criado com sucesso"
+        '400':
+          description: Requisição inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid-ip:
+                  value:
+                    error: "IP inválido: 999.999.999.999"
+                    request_id: "req-123"
+                empty-list:
+                  value:
+                    error: "Lista de IPs não pode estar vazia"
+                    request_id: "req-124"
+        '500':
+          description: Erro interno do servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: Health check
+      description: Verifica o status de saúde da API e suas dependências
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: API está saudável
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                database: "connected"
+                version: "2.0.0"
+                timestamp: "2025-06-29T18:30:00Z"
+        '503':
+          description: API com problemas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "unhealthy"
+                database: "disconnected"
+                version: "2.0.0"
+                timestamp: "2025-06-29T18:30:00Z"
+
+  /metrics:
+    get:
+      summary: Métricas do sistema
+      description: Retorna métricas de uso e performance do sistema
+      operationId: getMetrics
+      tags:
+        - System
+      responses:
+        '200':
+          description: Métricas atuais
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+              example:
+                jobs:
+                  total: 150
+                  queued: 5
+                  running: 10
+                  completed: 130
+                  failed: 5
+                  cancelled: 0
+                timestamp: "2025-06-29T18:30:00Z"
+
+components:
+  schemas:
+    ScanRequest:
+      type: object
+      required:
+        - ips
+      properties:
+        ips:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 100
+          description: |
+            Lista de alvos para scan. Suporta:
+            - IPs individuais (ex: 192.168.1.1)
+            - Hostnames (ex: example.com)
+            - Notação CIDR (ex: 192.168.1.0/24)
+          example: ["192.168.1.1", "example.com", "10.0.0.0/30"]
+        ports:
+          type: string
+          description: |
+            Portas para scan. Formatos suportados:
+            - Portas individuais: "80,443,22"
+            - Ranges: "1-1000"
+            - Mix: "22,80,443,1000-2000"
+            - Vazio/null: usa portas padrão
+          example: "21,22,23,25,53,80,110,111,135,139,143,443,445,993,995,1723,3306,3389,5432,5900,8080"
+        enable_probes:
+          type: boolean
+          default: true
+          description: Habilita execução de probes de vulnerabilidade
+        enable_deep_scan:
+          type: boolean
+          default: true
+          description: Habilita deep scan com Nmap quando vulnerabilidades são encontradas
+
+    AsyncScanResponse:
+      type: object
+      properties:
+        scan_id:
+          type: string
+          format: uuid
+          description: ID único do job de scan
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+          description: Status atual do job
+          example: "queued"
+        message:
+          type: string
+          description: Mensagem descritiva
+          example: "Job criado com sucesso"
+        request_id:
+          type: string
+          description: ID da requisição para tracking
+          example: "req-123456"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          description: Status geral da API
+        database:
+          type: string
+          enum: [connected, disconnected]
+          description: Status da conexão com banco de dados
+        version:
+          type: string
+          description: Versão da API
+          example: "2.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          description: Timestamp da verificação
+
+    MetricsResponse:
+      type: object
+      properties:
+        jobs:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: Total de jobs criados
+            queued:
+              type: integer
+              description: Jobs aguardando execução
+            running:
+              type: integer
+              description: Jobs em execução
+            completed:
+              type: integer
+              description: Jobs completados
+            failed:
+              type: integer
+              description: Jobs que falharam
+            cancelled:
+              type: integer
+              description: Jobs cancelados
+        timestamp:
+          type: string
+          format: date-time
+          description: Timestamp das métricas
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Mensagem de erro
+          example: "IP inválido: 999.999.999.999"
+        request_id:
+          type: string
+          description: ID da requisição para tracking
+          example: "req-123456"
+        details:
+          type: object
+          description: Detalhes adicionais do erro (opcional)
+
+    ScanResult:
+      type: object
+      properties:
+        scan_id:
+          type: string
+          format: uuid
+          description: ID do scan
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostResult'
+        summary:
+          $ref: '#/components/schemas/ScanSummary'
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    HostResult:
+      type: object
+      properties:
+        ip:
+          type: string
+          description: IP do host
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortResult'
+        probes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProbeResult'
+
+    PortResult:
+      type: object
+      properties:
+        port:
+          type: integer
+          description: Número da porta
+        protocol:
+          type: string
+          enum: [tcp, udp]
+        state:
+          type: string
+          enum: [open, closed, filtered]
+        service:
+          type: string
+          description: Serviço detectado
+          example: "http"
+
+    ProbeResult:
+      type: object
+      properties:
+        probe_type:
+          type: string
+          enum: [ftp, vnc, rdp, ldap, pptp, rsync]
+        port:
+          type: integer
+        is_vulnerable:
+          type: boolean
+        evidence:
+          type: string
+          description: Evidência da vulnerabilidade
+        service_name:
+          type: string
+        service_version:
+          type: string
+        banner:
+          type: string
+
+    ScanSummary:
+      type: object
+      properties:
+        total_ips:
+          type: integer
+        total_ports:
+          type: integer
+        open_ports:
+          type: integer
+        vulnerable_ports:
+          type: integer
+        probes_run:
+          type: integer
+        deep_scans_run:
+          type: integer
+        duration_ms:
+          type: integer
+        errors:
+          type: integer
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key para autenticação (ainda não implementado)
+
+tags:
+  - name: Scanning
+    description: Operações de scanning de portas e vulnerabilidades
+  - name: System
+    description: Operações de sistema e monitoramento

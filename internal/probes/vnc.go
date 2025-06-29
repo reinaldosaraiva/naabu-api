@@ -8,16 +8,21 @@ import (
 	"time"
 
 	"naabu-api/internal/models"
+
+	"go.uber.org/zap"
 )
 
-// VNCProbe implements VNC security detection
+// VNCProbe implementa probe para VNC (porta 5900)
+// US-2: Detecta versão e métodos de segurança do VNC
 type VNCProbe struct {
+	logger  *zap.Logger
 	timeout time.Duration
 }
 
-// NewVNCProbe creates a new VNC probe
-func NewVNCProbe() *VNCProbe {
+// NewVNCProbe cria uma nova instância do probe VNC
+func NewVNCProbe(logger *zap.Logger) *VNCProbe {
 	return &VNCProbe{
+		logger:  logger,
 		timeout: 30 * time.Second,
 	}
 }
@@ -39,28 +44,45 @@ func (p *VNCProbe) IsRelevantPort(port int) bool {
 	return port >= 5900 && port <= 5999
 }
 
-func (p *VNCProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult, error) {
-	result := &ProbeResult{}
-	
+// Probe executa o probe VNC conforme US-2
+// Critério: Given a porta 5900 aberta; When o probe envia handshake RFB 003.003;
+// Then deve retornar protocolVersion e securityTypes, marcando vuln=true se não houver VeNCrypt ou senha
+func (p *VNCProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
+	result := &models.ProbeResult{
+		Host:         ip,
+		Port:         port,
+		ProbeType:    models.ProbeTypeVNC,
+		ServiceName:  "vnc",
+		IsVulnerable: false,
+		CreatedAt:    time.Now(),
+	}
+	p.logger.Debug("Starting VNC probe",
+		zap.String("host", ip),
+		zap.Int("port", port),
+	)
+
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
+		result.Evidence = fmt.Sprintf("Connection failed: %v", err)
+		return result, nil
 	}
 	defer conn.Close()
 
 	// Set read/write deadlines
 	conn.SetDeadline(time.Now().Add(p.timeout))
 	
-	// Read RFB protocol version from server
+	// US-2 Criterion: Read RFB protocol version from server
 	versionBuf := make([]byte, 12)
 	n, err := conn.Read(versionBuf)
 	if err != nil || n != 12 {
-		return nil, fmt.Errorf("failed to read RFB version: %w", err)
+		result.Evidence = fmt.Sprintf("Failed to read RFB version: %v", err)
+		return result, nil
 	}
 	
 	serverVersion := string(versionBuf)
+	result.Banner = strings.TrimSpace(serverVersion)
 	
 	// Check if it's a valid RFB protocol
 	if !strings.HasPrefix(serverVersion, "RFB ") {
@@ -68,18 +90,20 @@ func (p *VNCProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult
 		return result, nil
 	}
 
-	// Send back compatible version (RFB 003.003)
+	// US-2 Criterion: Send handshake RFB 003.003
 	clientVersion := "RFB 003.003\n"
 	_, err = conn.Write([]byte(clientVersion))
 	if err != nil {
-		return nil, fmt.Errorf("failed to send client version: %w", err)
+		result.Evidence = fmt.Sprintf("Failed to send RFB 003.003 handshake: %v", err)
+		return result, nil
 	}
 
 	// Read security types
 	securityTypesBuf := make([]byte, 1)
 	_, err = conn.Read(securityTypesBuf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read security types length: %w", err)
+		result.Evidence = fmt.Sprintf("Failed to read security types length: %v", err)
+		return result, nil
 	}
 	
 	numSecurityTypes := int(securityTypesBuf[0])
@@ -105,10 +129,11 @@ func (p *VNCProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult
 	securityTypes := make([]byte, numSecurityTypes)
 	_, err = conn.Read(securityTypes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read security types: %w", err)
+		result.Evidence = fmt.Sprintf("Failed to read security types: %v", err)
+		return result, nil
 	}
 
-	// Analyze security types
+	// US-2 Criterion: Analyze security types
 	var hasNone, hasVNCAuth, hasVeNCrypt bool
 	var securityTypeNames []string
 	
@@ -130,27 +155,47 @@ func (p *VNCProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult
 		}
 	}
 
-	// Determine vulnerability
+	// US-2 Criterion: Mark vuln=true if no VeNCrypt or password
 	if hasNone {
 		result.IsVulnerable = true
-		result.Evidence = fmt.Sprintf("VNC with no authentication detected. Server version: %s | Security types: %s", 
+		result.Evidence = fmt.Sprintf("VNC with NO authentication detected. protocolVersion: %s | securityTypes: %s", 
 			strings.TrimSpace(serverVersion), strings.Join(securityTypeNames, ", "))
+		
+		p.logger.Warn("Vulnerable VNC server found - no authentication",
+			zap.String("host", ip),
+			zap.Int("port", port),
+			zap.String("version", serverVersion),
+		)
 	} else if hasVNCAuth && !hasVeNCrypt {
 		result.IsVulnerable = true
-		result.Evidence = fmt.Sprintf("VNC with weak authentication detected. Server version: %s | Security types: %s", 
+		result.Evidence = fmt.Sprintf("VNC with weak authentication detected. protocolVersion: %s | securityTypes: %s", 
 			strings.TrimSpace(serverVersion), strings.Join(securityTypeNames, ", "))
+		
+		p.logger.Warn("Vulnerable VNC server found - weak authentication",
+			zap.String("host", ip),
+			zap.Int("port", port),
+			zap.String("version", serverVersion),
+		)
 	} else {
-		result.Evidence = fmt.Sprintf("VNC with secure authentication. Server version: %s | Security types: %s", 
+		result.Evidence = fmt.Sprintf("VNC with secure authentication. protocolVersion: %s | securityTypes: %s", 
 			strings.TrimSpace(serverVersion), strings.Join(securityTypeNames, ", "))
 	}
 
-	// Extract service information
-	result.ServiceInfo = &models.ServiceInfo{
-		Type:       "vnc",
-		Version:    strings.TrimSpace(serverVersion),
-		Banner:     strings.TrimSpace(serverVersion),
-		Confidence: 0.95,
-	}
+	// Extract service version
+	result.ServiceVersion = extractVNCVersion(serverVersion)
 
 	return result, nil
+}
+
+// extractVNCVersion extrai informações de versão do protocolo RFB
+func extractVNCVersion(rfbVersion string) string {
+	rfbVersion = strings.TrimSpace(rfbVersion)
+	
+	// Formato padrão: "RFB 003.008" ou similar
+	if strings.HasPrefix(rfbVersion, "RFB ") {
+		versionPart := strings.TrimPrefix(rfbVersion, "RFB ")
+		return fmt.Sprintf("RFB Protocol %s", versionPart)
+	}
+	
+	return rfbVersion
 }

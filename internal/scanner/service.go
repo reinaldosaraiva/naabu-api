@@ -125,22 +125,75 @@ func (s *Service) ScanPortsStreaming(ctx context.Context, req models.ScanRequest
 	return nil
 }
 
-// validateIPs valida e normaliza a lista de IPs
-func (s *Service) validateIPs(ips []string) ([]string, error) {
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("lista de IPs não pode estar vazia")
+// validateIPs valida e normaliza a lista de IPs, hostnames e CIDRs
+func (s *Service) validateIPs(targets []string) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("lista de alvos não pode estar vazia")
 	}
 	
-	validIPs := make([]string, 0, len(ips))
-	for _, ip := range ips {
-		ip = strings.TrimSpace(ip)
-		if net.ParseIP(ip) == nil {
-			return nil, fmt.Errorf("IP inválido: %s", ip)
+	validTargets := make([]string, 0)
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		
+		// Check if it's a CIDR
+		if strings.Contains(target, "/") {
+			ip, ipnet, err := net.ParseCIDR(target)
+			if err != nil {
+				return nil, fmt.Errorf("CIDR inválido: %s", target)
+			}
+			// Expand CIDR to individual IPs
+			for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
+				validTargets = append(validTargets, ip.String())
+			}
+			continue
 		}
-		validIPs = append(validIPs, ip)
+		
+		// Check if it's a valid IP
+		if net.ParseIP(target) != nil {
+			validTargets = append(validTargets, target)
+			continue
+		}
+		
+		// Try to resolve as hostname
+		ips, err := net.LookupIP(target)
+		if err != nil {
+			return nil, fmt.Errorf("hostname inválido ou não resolvível: %s", target)
+		}
+		
+		// Add resolved IPs
+		for _, ip := range ips {
+			// Filter IPv4 addresses only for now
+			if ip.To4() != nil {
+				validTargets = append(validTargets, ip.String())
+			}
+		}
 	}
 	
-	return validIPs, nil
+	if len(validTargets) == 0 {
+		return nil, fmt.Errorf("nenhum alvo válido encontrado")
+	}
+	
+	// Remove duplicates
+	uniqueTargets := make(map[string]bool)
+	result := make([]string, 0)
+	for _, target := range validTargets {
+		if !uniqueTargets[target] {
+			uniqueTargets[target] = true
+			result = append(result, target)
+		}
+	}
+	
+	return result, nil
+}
+
+// inc increments IP address
+func inc(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
 }
 
 // preparePorts converte string de portas em slice de inteiros

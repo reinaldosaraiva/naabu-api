@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Naabu API - Documentação</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.0/swagger-ui.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .header {
+            background: #1a202c;
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .header p {
+            margin: 0.5rem 0 0 0;
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+        #swagger-ui {
+            margin-top: 1rem;
+        }
+        .info {
+            background: #f7fafc;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .info-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .info-card h3 {
+            margin: 0 0 0.5rem 0;
+            color: #2d3748;
+            font-size: 0.9rem;
+        }
+        .info-card p {
+            margin: 0;
+            color: #4a5568;
+            font-size: 0.85rem;
+        }
+        .probe-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        .probe-badge {
+            background: #edf2f7;
+            color: #2d3748;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Naabu API - Descoberta de Exposições de Serviço</h1>
+        <p>API REST para scanning de portas e detecção de vulnerabilidades em larga escala</p>
+    </div>
+    
+    <div class="info">
+        <div class="info-grid">
+            <div class="info-card">
+                <h3>🚀 Endpoints Principais</h3>
+                <p><strong>POST /scan</strong> - Criar novo job de scan</p>
+                <p><strong>GET /health</strong> - Verificar saúde da API</p>
+                <p><strong>GET /metrics</strong> - Obter métricas do sistema</p>
+            </div>
+            
+            <div class="info-card">
+                <h3>🔍 Probes Disponíveis</h3>
+                <div class="probe-list">
+                    <span class="probe-badge">FTP</span>
+                    <span class="probe-badge">VNC</span>
+                    <span class="probe-badge">RDP</span>
+                    <span class="probe-badge">LDAP</span>
+                    <span class="probe-badge">PPTP</span>
+                    <span class="probe-badge">rsync</span>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <h3>📊 Worker Pools</h3>
+                <p><strong>Quick Scan:</strong> 5 workers</p>
+                <p><strong>Probe Pool:</strong> 10 workers</p>
+                <p><strong>Deep Scan:</strong> 3 workers</p>
+            </div>
+            
+            <div class="info-card">
+                <h3>🎯 Formatos Suportados</h3>
+                <p><strong>IPs:</strong> 192.168.1.1</p>
+                <p><strong>Hostnames:</strong> example.com</p>
+                <p><strong>CIDR:</strong> 10.0.0.0/24</p>
+            </div>
+        </div>
+    </div>
+    
+    <div id="swagger-ui"></div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.0/swagger-ui-bundle.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.0/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            window.ui = SwaggerUIBundle({
+                url: "/docs/swagger.yaml",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                validatorUrl: null,
+                tryItOutEnabled: true,
+                supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+                onComplete: function() {
+                    console.log("Swagger UI loaded");
+                }
+            });
+        };
+    </script>
+</body>
+</html>
