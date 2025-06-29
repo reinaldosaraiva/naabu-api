@@ -39,8 +39,8 @@ func (p *RsyncProbe) IsRelevantPort(port int) bool {
 	return port == 873
 }
 
-func (p *RsyncProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResult, error) {
-	result := &ProbeResult{}
+func (p *RsyncProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
+	result := &models.ProbeResult{}
 	
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
@@ -160,12 +160,9 @@ func (p *RsyncProbe) Probe(ctx context.Context, ip string, port int) (*ProbeResu
 	}
 
 	// Extract service information
-	result.ServiceInfo = &models.ServiceInfo{
-		Type:       "rsync",
-		Version:    "rsync daemon",
-		Banner:     banner,
-		Confidence: 0.95,
-	}
+	result.ServiceName = "rsync"
+	result.ServiceVersion = "rsync daemon"
+	result.Banner = banner
 
 	return result, nil
 }

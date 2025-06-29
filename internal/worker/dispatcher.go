@@ -154,6 +154,27 @@ func (d *Dispatcher) SubmitDeepScan(scanID uuid.UUID, targets []deepscan.ScanTar
 	return d.deepScanPool.Submit(job)
 }
 
+// ExecuteAsync executes a scan asynchronously  
+func (d *Dispatcher) ExecuteAsync(ctx context.Context, scanID uuid.UUID, req models.ScanRequest) error {
+	d.logger.Info("Starting async scan execution",
+		zap.String("scan_id", scanID.String()),
+		zap.Int("ip_count", len(req.IPs)),
+	)
+
+	// Submit to quick scan pool
+	return d.SubmitQuickScan(scanID, req.IPs, req.Ports)
+}
+
+// ExecuteSync executes a scan synchronously and returns results
+func (d *Dispatcher) ExecuteSync(ctx context.Context, req models.ScanRequest) (models.ScanResponse, error) {
+	d.logger.Info("Starting sync scan execution",
+		zap.Int("ip_count", len(req.IPs)),
+	)
+
+	// Execute scan directly using the scanner
+	return d.scanner.ScanPorts(ctx, req)
+}
+
 // GetStats returns statistics for all worker pools
 func (d *Dispatcher) GetStats() map[string]interface{} {
 	return map[string]interface{}{

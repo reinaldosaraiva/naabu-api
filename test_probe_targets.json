@@ -1,0 +1,32 @@
+{
+  "ftp_test": {
+    "ip": "ftp.dlptest.com",
+    "port": 21,
+    "expected": "anonymous FTP"
+  },
+  "vnc_test": {
+    "ip": "localhost", 
+    "port": 5900,
+    "expected": "VNC without auth"
+  },
+  "rdp_test": {
+    "ip": "localhost",
+    "port": 3389,
+    "expected": "RDP weak encryption"
+  },
+  "ldap_test": {
+    "ip": "ldap.forumsys.com",
+    "port": 389,
+    "expected": "anonymous bind"
+  },
+  "pptp_test": {
+    "ip": "localhost",
+    "port": 1723,
+    "expected": "PPTP legacy VPN"
+  },
+  "rsync_test": {
+    "ip": "rsync.cyberciti.biz",
+    "port": 873,
+    "expected": "accessible modules"
+  }
+}

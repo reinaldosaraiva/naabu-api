@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # FTP vulnerável para teste
+  ftp-test:
+    image: bogem/ftp
+    environment:
+      - FTP_USER=anonymous
+      - FTP_PASS=anonymous
+    ports:
+      - "2121:21"
+    networks:
+      - test-net
+
+  # VNC vulnerável para teste (sem autenticação)
+  vnc-test:
+    image: consol/ubuntu-xfce-vnc
+    environment:
+      - VNC_PW=
+    ports:
+      - "5901:5901"
+    networks:
+      - test-net
+
+networks:
+  test-net:
+    driver: bridge

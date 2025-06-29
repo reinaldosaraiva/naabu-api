@@ -1,553 +1,367 @@
-# Naabu API 🔍
+# Naabu API - Descoberta de Exposições de Serviço 🔍
 
-Um serviço HTTP minimalista em Go para realizar port scanning utilizando o SDK oficial da ProjectDiscovery (naabu/v2).
+API REST para descoberta e validação de exposições de serviço em larga escala com detecção automática de vulnerabilidades.
 
 ## ⚠️ AVISO IMPORTANTE
-Esta ferramenta realiza **port scanning**. Use **APENAS** em redes próprias ou com autorização explícita. O uso não autorizado pode ser ilegal. Leia [SECURITY.md](SECURITY.md) antes de usar.
+Esta ferramenta realiza **port scanning** e **detecção de vulnerabilidades**. Use **APENAS** em redes próprias ou com autorização explícita. O uso não autorizado pode ser ilegal.
 
 ## 🚀 Quick Start
 
-### Setup Automático (Mais Fácil!)
+### Docker Compose (Recomendado)
 
 ```bash
-# 1. Clonar/baixar os arquivos do projeto
-# 2. Executar script de setup
-chmod +x setup.sh
-./setup.sh
-
-# Pronto! O serviço estará rodando em http://localhost:8081
-```
-
-### Setup Manual com Docker
-
-```bash
-# 1. Clonar/baixar os arquivos do projeto
-# 2. Build da imagem
-docker build -t naabu-api .
-
-# 3. Executar container
-docker run -p 8081:8080 naabu-api
-
-# 4. Testar API
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{"ips":["127.0.0.1"], "ports":"80,443"}'
-```
-
-### Executando Localmente
-
-```bash
-# 1. Instalar dependências do sistema (Ubuntu/Debian)
-sudo apt-get update && sudo apt-get install -y libpcap-dev
-
-# 2. Instalar dependências Go
-make deps
-
-# 3. Compilar
-make build
-
-# 4. Executar
-make run
-# OU
-./build/naabu-api
-```
-
-## 📋 Características
-
-- **API REST**: Endpoint simples para scan de portas
-- **SDK Nativo**: Usa naabu/v2 diretamente, sem subprocessos
-- **Logging Estruturado**: Logs JSON com contexto por requisição
-- **Validação Robusta**: Validação de IPs e portas
-- **Testes Completos**: Testes unitários e de integração
-- **Graceful Shutdown**: Finalização controlada do servidor
-- **Segurança**: Validações de entrada e limites de requisição
-
-## Estrutura do Projeto
-
-```
-naabu-api/
-├── main.go                     # Ponto de entrada da aplicação
-├── go.mod                      # Dependências do módulo
-├── Makefile                    # Comandos de build e teste
-├── Dockerfile                  # Imagem Docker
-├── pkg/
-│   └── logger/                 # Logger estruturado
-│       └── logger.go
-├── internal/
-│   ├── models/                 # Modelos de dados
-│   │   └── models.go
-│   ├── handlers/               # Handlers HTTP
-│   │   ├── handlers.go
-│   │   └── handlers_test.go
-│   └── scanner/                # Serviço de scanning
-│       ├── service.go
-│       └── service_test.go
-├── examples/
-│   └── curl_examples.sh        # Exemplos de uso
-└── integration_test.go         # Testes de integração
-```
-
-## API
-
-### POST /scan
-
-Executa scan de portas nos IPs especificados.
-
-**Requisição:**
-```json
-{
-  "ips": ["192.168.1.1", "10.0.0.1"],
-  "ports": "80,443,22-25"
-}
-```
-
-**Resposta:**
-```json
-{
-  "results": [
-    {
-      "ip": "192.168.1.1",
-      "ports": [
-        {
-          "port": 80,
-          "protocol": "tcp",
-          "state": "open"
-        }
-      ],
-      "error": ""
-    }
-  ],
-  "summary": {
-    "total_ips": 1,
-    "total_ports": 3,
-    "open_ports": 1,
-    "duration_ms": 1250,
-    "errors": 0
-  },
-  "request_id": "uuid-da-requisição"
-}
-```
-
-### GET /health
-
-Verifica o status do serviço.
-
-**Resposta:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "version": "1.0.0"
-}
-```
-
-## 🐳 Docker
-
-### Build e Execução Manual
-
-```bash
-# Build da imagem
-docker build -t naabu-api .
-
-# Executar container (porta 8081 no host -> 8080 no container)
-docker run -d \
-  --name naabu-api-container \
-  -p 8081:8080 \
-  --restart unless-stopped \
-  naabu-api
-
-# Ver logs
-docker logs -f naabu-api-container
-
-# Parar container
-docker stop naabu-api-container
-
-# Remover container
-docker rm naabu-api-container
-```
-
-### Usando Docker Compose
-
-Crie um arquivo `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-services:
-  naabu-api:
-    build: .
-    ports:
-      - "8081:8080"
-    restart: unless-stopped
-    environment:
-      - ENV=production
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-```bash
-# Subir serviço
-docker-compose up -d
-
-# Ver logs
-docker-compose logs -f
-
-# Parar serviço
-docker-compose down
-```
-
-## 📡 Como Usar a API
-
-### 1. Health Check
-
-```bash
-curl http://localhost:8081/health
-```
-
-**Resposta:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "version": "1.0.0"
-}
-```
-
-### 2. Scan Básico
-
-```bash
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ips": ["127.0.0.1"],
-    "ports": "22,80,443"
-  }'
-```
-
-### 3. Scan de Múltiplos IPs
-
-```bash
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ips": ["127.0.0.1", "8.8.8.8"],
-    "ports": "53,80,443"
-  }'
-```
-
-### 4. Scan com Range de Portas
-
-```bash
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ips": ["127.0.0.1"],
-    "ports": "80-85,443,8080"
-  }'
-```
-
-### 5. Scan com Portas Padrão
-
-```bash
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ips": ["127.0.0.1"]
-  }'
-```
-
-### Exemplos Automatizados
-
-```bash
-# Executar todos os exemplos
-chmod +x examples/curl_examples.sh
-./examples/curl_examples.sh
-```
-
-## 🔧 Desenvolvimento Local
-
-### Pré-requisitos
-
-- Go 1.21+
-- libpcap-dev (Ubuntu/Debian) ou libpcap (macOS)
-
-### Setup
-
-```bash
-# Clonar projeto
+# 1. Clonar repositório
 git clone <repo-url>
 cd naabu-api
 
+# 2. Iniciar serviço
+docker compose up -d
+
+# 3. Verificar status
+curl http://localhost:8082/health
+
+# API estará disponível em http://localhost:8082
+# Documentação Swagger em http://localhost:8082/docs/
+```
+
+### Atualizar Versão em Produção
+
+```bash
+# 1. Parar versão atual
+docker compose down
+
+# 2. Atualizar código
+git pull origin master
+
+# 3. Reconstruir e iniciar
+docker compose up -d --build
+
+# 4. Verificar saúde
+curl http://localhost:8082/health
+```
+
+## 📋 Características Principais
+
+- ✅ **Port Scanning com Naabu** - Scanner rápido e eficiente
+- ✅ **6 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync
+- ✅ **Deep Scanning Automático** - Nmap NSE scripts quando vulnerabilidades são detectadas
+- ✅ **Suporte Completo** - IPs, hostnames e notação CIDR
+- ✅ **Worker Pools** - 3 pools especializados para máxima performance
+- ✅ **API Assíncrona** - Jobs em background com tracking por UUID
+- ✅ **Documentação Swagger** - Interface interativa em `/docs/`
+
+## 📡 Guia Prático de Uso
+
+### 1. Scan Básico de IP
+
+```bash
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.1"],
+    "ports": "80,443,22"
+  }'
+```
+
+**Resposta:**
+```json
+{
+  "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "queued",
+  "message": "Job criado com sucesso"
+}
+```
+
+### 2. Scan com Hostname
+
+```bash
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["google.com"],
+    "ports": "80,443"
+  }'
+```
+
+### 3. Scan de Rede (CIDR)
+
+```bash
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.0/24"],
+    "ports": "22,3389,5900"
+  }'
+```
+
+### 4. Scan Completo com Probes
+
+```bash
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.1", "example.com", "10.0.0.0/24"],
+    "ports": "21,22,80,389,443,873,1723,3389,5900-5910",
+    "enable_probes": true,
+    "enable_deep_scan": true
+  }'
+```
+
+### 5. Verificar Status do Job
+
+```bash
+# Substituir pelo scan_id recebido
+curl http://localhost:8082/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000
+```
+
+### 6. Listar Jobs Ativos
+
+```bash
+curl http://localhost:8082/api/v1/jobs
+```
+
+### 7. Métricas do Sistema
+
+```bash
+curl http://localhost:8082/metrics
+```
+
+## 🔍 Probes de Vulnerabilidade
+
+A API detecta automaticamente as seguintes vulnerabilidades:
+
+| Probe | Porta | Vulnerabilidade Detectada |
+|-------|-------|---------------------------|
+| **FTP** | 21 | Login anônimo habilitado |
+| **VNC** | 5900-5999 | Sem autenticação |
+| **RDP** | 3389 | Criptografia fraca (sem TLS/CredSSP) |
+| **LDAP** | 389, 636 | Bind anônimo permitido |
+| **PPTP** | 1723 | VPN legacy vulnerável |
+| **rsync** | 873 | Módulos públicos acessíveis |
+
+## 📊 Formato de Resposta
+
+### Resposta de Scan Criado
+```json
+{
+  "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "queued",
+  "message": "Job criado com sucesso"
+}
+```
+
+### Status do Job
+```json
+{
+  "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "created_at": "2025-06-29T10:30:00Z",
+  "completed_at": "2025-06-29T10:30:45Z",
+  "results": {
+    "results": [
+      {
+        "ip": "192.168.1.1",
+        "ports": [
+          {
+            "port": 22,
+            "protocol": "tcp",
+            "state": "open",
+            "service": "ssh"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total_ips": 1,
+      "open_ports": 1,
+      "duration_ms": 45000
+    }
+  },
+  "probe_results": [
+    {
+      "host": "192.168.1.1",
+      "port": 21,
+      "probe_type": "ftp",
+      "service_name": "vsftpd",
+      "service_version": "3.0.3",
+      "is_vulnerable": true,
+      "evidence": "Anonymous login allowed"
+    }
+  ],
+  "deep_scans": [
+    {
+      "host": "192.168.1.1",
+      "port": 21,
+      "nse_scripts": ["ftp-anon", "ftp-bounce"],
+      "xml_output": "<nmaprun>...</nmaprun>"
+    }
+  ]
+}
+```
+
+## 🛠️ Endpoints da API
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/scan` | Criar novo job de scan |
+| `GET` | `/health` | Verificar saúde da API |
+| `GET` | `/metrics` | Obter métricas do sistema |
+| `GET` | `/api/v1/jobs` | Listar todos os jobs |
+| `GET` | `/api/v1/jobs/:id` | Detalhes de um job |
+| `DELETE` | `/api/v1/jobs/:id` | Cancelar um job |
+| `GET` | `/docs/` | Documentação Swagger |
+
+## 📝 Parâmetros de Scan
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `ips` | string[] | Sim | Lista de IPs, hostnames ou CIDRs |
+| `ports` | string | Não | Portas a escanear (default: portas comuns) |
+| `enable_probes` | boolean | Não | Ativar detecção de vulnerabilidades |
+| `enable_deep_scan` | boolean | Não | Ativar Nmap NSE para vulnerabilidades |
+
+### Formato de Portas
+- Individual: `"80,443,8080"`
+- Range: `"1-1000"`
+- Misto: `"22,80,443,1000-2000,8080"`
+
+### Formato de Alvos
+- IP: `"192.168.1.1"`
+- IPv6: `"2001:db8::1"`
+- Hostname: `"example.com"`
+- CIDR: `"10.0.0.0/24"`
+
+## 🐳 Docker
+
+### Variáveis de Ambiente
+
+```yaml
+# docker-compose.yml
+environment:
+  - ENV=production
+  - PORT=8080
+  - DB_DRIVER=sqlite
+  - QUICK_SCAN_WORKERS=5
+  - PROBE_WORKERS=10
+  - DEEP_SCAN_WORKERS=3
+  - NAABU_RATE_LIMIT=1000
+  - NAABU_TIMEOUT=5m
+```
+
+### Comandos Úteis
+
+```bash
+# Ver logs
+docker compose logs -f
+
+# Executar shell no container
+docker compose exec naabu-api /bin/bash
+
+# Ver estatísticas
+docker stats naabu-api
+
+# Backup do banco
+docker compose exec naabu-api sqlite3 /data/naabu_api.db .dump > backup.sql
+```
+
+## 🔧 Desenvolvimento
+
+### Pré-requisitos
+- Go 1.21+
+- Docker e Docker Compose
+- libpcap-dev (Linux) ou libpcap (macOS)
+
+### Setup Local
+
+```bash
 # Instalar dependências
 make deps
 
 # Executar testes
 make test
 
-# Compilar
+# Build local
 make build
 
-# Executar
+# Executar localmente
 make run
 ```
 
-### Comandos Disponíveis
+### Comandos Make
 
 ```bash
-make help          # Ver todos os comandos
-make build          # Compilar aplicação
-make run            # Executar aplicação
-make test           # Executar todos os testes
-make test-unit      # Testes unitários
-make test-integration # Testes de integração
-make docker-build   # Build Docker
-make clean          # Limpar arquivos de build
+make help              # Ver todos comandos
+make test-unit         # Testes unitários
+make test-integration  # Testes de integração
+make test-coverage     # Relatório de cobertura
+make lint              # Verificar código
+make fmt               # Formatar código
 ```
 
-## Configuração
+## ⚠️ Segurança
 
-### Variáveis de Ambiente
+### Boas Práticas
+1. **NUNCA** execute em redes sem autorização
+2. Use autenticação em produção
+3. Configure firewall apropriado
+4. Monitore logs para detectar abuso
+5. Implemente rate limiting por cliente
 
-- `ENV=production`: Ativa logs em formato JSON
-- `PORT=8080`: Porta do servidor (padrão: 8080)
-
-### Limites
-
-- **Máximo de IPs por requisição**: 100
-- **Timeout de scan**: 5 minutos
-- **Timeout de conexão**: 5 segundos
-- **Rate limit**: 1000 conexões/segundo
-
-## Pontos Críticos de Segurança
-
-### Entrada de Dados
-- ✅ Validação rigorosa de IPs
-- ✅ Sanitização de portas
-- ✅ Limite de IPs por requisição
-- ✅ Timeouts para evitar DoS
-
-### Rede
-- ⚠️ **ATENÇÃO**: Ferramenta de scanning pode ser considerada maliciosa
-- ⚠️ Use apenas em redes próprias ou com autorização
-- ⚠️ Considere implementar autenticação/autorização
-- ⚠️ Monitore logs para uso abusivo
-
-### Recursos
-- ✅ Limite de goroutines (via rate limit)
-- ✅ Timeouts em todas as operações
-- ✅ Graceful shutdown
-
-## Pontos de Performance
-
-### Otimizações Implementadas
-- Scanning paralelo por IP
-- Rate limiting configurável
-- Timeouts agressivos
-- Pools de conexão (naabu internal)
-
-### Métricas
-- Duração de cada scan
-- Contadores de sucesso/erro
-- Request ID para rastreamento
-
-### Possíveis Melhorias
-- Cache de resultados
-- Metrics endpoint (Prometheus)
-- Rate limiting por IP cliente
-- Database para histórico
-
-## Desenvolvimento
-
-### Testes
-
-```bash
-# Testes unitários
-make test-unit
-
-# Testes de integração
-make test-integration
-
-# Coverage
-make test-coverage
-
-# Benchmarks
-make benchmark
-```
-
-### Qualidade de Código
-
-```bash
-# Formatação
-make fmt
-
-# Linting
-make lint
-
-# Security check
-make security
-
-# Vet
-make vet
-```
-
-### Comandos Docker no Makefile
-
-```bash
-make docker-build          # Build da imagem
-make docker-run            # Executar container (foreground)
-make docker-run-detached   # Executar container (background)
-make docker-stop           # Parar container
-make docker-remove         # Remover container
-make docker-logs           # Ver logs do container
-make docker-compose-up     # Subir com docker-compose
-make docker-compose-down   # Parar docker-compose
-make docker-compose-logs   # Ver logs do docker-compose
-```
-
-## 🔍 Testando o Serviço
-
-### Após subir o container:
-
-```bash
-# 1. Verificar se está rodando
-curl http://localhost:8081/health
-
-# 2. Teste rápido
-curl -X POST http://localhost:8081/scan \
-  -H "Content-Type: application/json" \
-  -d '{"ips":["127.0.0.1"], "ports":"80,443"}'
-
-# 3. Executar todos os exemplos
-./examples/curl_examples.sh
-```
-
-### Resposta de Exemplo:
-
-```json
-{
-  "results": [
-    {
-      "ip": "127.0.0.1",
-      "ports": [
-        {
-          "port": 22,
-          "protocol": "tcp",
-          "state": "open"
-        }
-      ],
-      "error": ""
-    }
-  ],
-  "summary": {
-    "total_ips": 1,
-    "total_ports": 3,
-    "open_ports": 1,
-    "duration_ms": 1250,
-    "errors": 0
-  },
-  "request_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-## 🛠️ Troubleshooting
-
-### Container não inicia
-
-```bash
-# Verificar logs
-docker logs naabu-api
-
-# Verificar se a porta está em uso
-netstat -tulpn | grep 8081
-
-# Usar porta diferente
-docker run -p 9090:8080 naabu-api
-```
-
-### Permissões (Linux)
-
-Se houver erros de permissão para raw sockets:
-
-```bash
-# Executar com capabilities
-docker run --cap-add=NET_RAW --cap-add=NET_ADMIN -p 8081:8080 naabu-api
-
-# OU executar como privileged (menos seguro)
-docker run --privileged -p 8081:8080 naabu-api
-```
-
-### Firewall/Rede
-
-```bash
-# Verificar conectividade
-curl -v http://localhost:8081/health
-
-# Verificar container
-docker ps
-docker inspect naabu-api
-```
+### Limites de Segurança
+- Máximo 100 alvos por requisição
+- Timeout de 5 minutos por scan
+- Rate limit de 1000 pacotes/segundo
+- Validação rigorosa de entrada
 
 ## 📊 Monitoramento
 
-### Logs em Tempo Real
-
-```bash
-# Container direto
-docker logs -f naabu-api-container
-
-# Docker Compose
-docker-compose logs -f
-
-# Filtrar logs de erro
-docker logs naabu-api-container 2>&1 | grep ERROR
-```
-
 ### Health Check
-
-O container inclui health check automático que verifica `/health` a cada 30 segundos.
-
 ```bash
-# Ver status do health check
-docker inspect naabu-api --format='{{.State.Health.Status}}'
+# Verificar saúde
+curl http://localhost:8082/health
+
+# Métricas
+curl http://localhost:8082/metrics | jq
 ```
 
-## 🚀 Deploy em Produção
+### Logs Estruturados
+```bash
+# Ver logs em tempo real
+docker compose logs -f
 
-### Considerações Importantes
+# Filtrar por scan_id
+docker compose logs | grep "scan_id:550e8400"
 
-1. **Nunca execute em ambiente público sem autenticação**
-2. **Use HTTPS em produção**
-3. **Configure firewall apropriado**
-4. **Monitore logs e métricas**
-5. **Implemente rate limiting por IP**
-
-### Exemplo com Nginx Proxy
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name naabu-api.empresa.com;
-    
-    location / {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
+# Filtrar erros
+docker compose logs | grep "error"
 ```
 
-## 📚 Documentação Adicional
+## 🚀 Performance
 
-- [SECURITY.md](SECURITY.md) - Guia completo de segurança
-- [examples/](examples/) - Exemplos de uso
-- [Makefile](Makefile) - Comandos disponíveis
+### Worker Pools
+- **Quick Scan**: 5 workers para descoberta rápida
+- **Probe Pool**: 10 workers para detecção de serviços
+- **Deep Scan**: 3 workers para análise profunda
 
-## 🤝 Contribuição
+### Otimizações
+- Scanning paralelo por alvo
+- Cache de resolução DNS
+- Timeouts agressivos
+- Rate limiting configurável
 
-Este projeto é para fins educacionais e de segurança defensiva. Contribuições são bem-vindas para melhorar a segurança e funcionalidade.
+## 📚 Documentação Completa
+
+- **Swagger UI**: http://localhost:8082/docs/
+- **OpenAPI Spec**: http://localhost:8082/docs/swagger.yaml
+- **Exemplos**: Ver pasta `examples/`
+
+## 🤝 Suporte
+
+Para questões e suporte:
+- Issues: GitHub Issues
+- Documentação: Wiki do projeto
+- Swagger: http://localhost:8082/docs/
 
 ## ⚖️ Licença
 
-Este projeto é apenas para fins educacionais e de segurança defensiva. Use com responsabilidade e sempre obtenha autorização antes de realizar port scanning.
+Software para fins de segurança defensiva. Use com responsabilidade e sempre com autorização apropriada.

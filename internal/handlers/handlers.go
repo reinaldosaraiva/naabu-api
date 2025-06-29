@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -409,6 +411,11 @@ func (h *Handler) MetricsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
+// SwaggerRedirect redireciona para a documentação Swagger
+func (h *Handler) SwaggerRedirect(c *gin.Context) {
+	c.Redirect(http.StatusMovedPermanently, "/docs/")
+}
+
 // GetStats obtém estatísticas gerais
 func (h *Handler) GetStats(c *gin.Context) {
 	reqLogger := h.getLogger(c)
@@ -458,19 +465,75 @@ func (h *Handler) validateScanRequest(req models.ScanRequest) error {
 		return fmt.Errorf("campo 'ips' é obrigatório e não pode estar vazio")
 	}
 	
-	// Usar valor padrão de 100 IPs
-	maxIPs := 100
+	// Usar valor padrão de 100 targets
+	maxTargets := 100
 	
-	if len(req.IPs) > maxIPs {
-		return fmt.Errorf("máximo de %d IPs permitidos por requisição", maxIPs)
+	if len(req.IPs) > maxTargets {
+		return fmt.Errorf("máximo de %d IPs/hostnames/CIDRs permitidos por requisição", maxTargets)
 	}
 	
-	// Validar formato básico de IPs
-	for _, ip := range req.IPs {
-		if strings.TrimSpace(ip) == "" {
-			return fmt.Errorf("IP vazio encontrado na lista")
+	// Validar formato de IPs, hostnames e CIDRs
+	for i, target := range req.IPs {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			return fmt.Errorf("target vazio encontrado na posição %d", i)
+		}
+		
+		if err := h.validateTarget(target); err != nil {
+			return fmt.Errorf("target inválido '%s' na posição %d: %v", target, i, err)
 		}
 	}
 	
 	return nil
+}
+
+// validateTarget valida se o target é um IP válido, hostname ou CIDR
+func (h *Handler) validateTarget(target string) error {
+	// 1. Verificar se é um CIDR válido
+	if strings.Contains(target, "/") {
+		_, _, err := net.ParseCIDR(target)
+		if err == nil {
+			return nil // CIDR válido
+		}
+	}
+	
+	// 2. Verificar se é um IP válido (IPv4 ou IPv6)
+	if ip := net.ParseIP(target); ip != nil {
+		return nil // IP válido
+	}
+	
+	// 3. Verificar se é um hostname válido
+	if h.isValidHostname(target) {
+		return nil // Hostname válido
+	}
+	
+	return fmt.Errorf("não é um IP, hostname ou CIDR válido")
+}
+
+// isValidHostname verifica se uma string é um hostname válido
+func (h *Handler) isValidHostname(hostname string) bool {
+	// Hostname deve ter entre 1 e 253 caracteres
+	if len(hostname) == 0 || len(hostname) > 253 {
+		return false
+	}
+	
+	// Regex para validar hostname conforme RFC 1123
+	// Permite: letras, números, hífens, pontos
+	// Não pode começar ou terminar com hífen
+	// Cada label deve ter máximo 63 caracteres
+	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
+	
+	if !hostnameRegex.MatchString(hostname) {
+		return false
+	}
+	
+	// Verificar se cada label tem no máximo 63 caracteres
+	labels := strings.Split(hostname, ".")
+	for _, label := range labels {
+		if len(label) > 63 {
+			return false
+		}
+	}
+	
+	return true
 }

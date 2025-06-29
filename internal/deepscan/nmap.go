@@ -192,14 +192,13 @@ func (s *NmapScanner) ConvertToDeepScanArtifacts(scanID uuid.UUID, results []*Sc
 		}
 
 		artifact := models.DeepScanArtifact{
-			ScanID:    scanID,
-			IP:        result.Target.IP,
-			Port:      result.Target.Port,
-			Protocol:  result.Target.Protocol,
-			Tool:      "nmap",
-			Command:   result.Command,
-			XMLOutput: result.XMLOutput,
-			Status:    "completed",
+			ScanID:       scanID,
+			Host:         result.Target.IP,
+			Port:         result.Target.Port,
+			ArtifactType: "nmap_xml",
+			Content:      result.XMLOutput,
+			ScriptNames:  result.Command, // Temporary: usar command como script names
+			CreatedAt:    time.Now(),
 		}
 
 		artifacts = append(artifacts, artifact)
