@@ -53,6 +53,7 @@ type NaabuConfig struct {
 	Interface    string        `json:"interface"`    // network interface
 	SourceIP     string        `json:"source_ip"`    // source IP
 	Threads      int           `json:"threads"`      // number of threads
+	MaxTargets   int           `json:"max_targets"`  // maximum targets per scan
 }
 
 // NmapConfig holds Nmap configuration
@@ -97,13 +98,14 @@ func Load() *Config {
 			DeepScanWorkers:  getIntEnv("DEEP_SCAN_WORKERS", 3),
 		},
 		Naabu: NaabuConfig{
-			RateLimit: getIntEnv("NAABU_RATE_LIMIT", 1000),
-			Timeout:   getDurationEnv("NAABU_TIMEOUT", 5*time.Minute),
-			Retries:   getIntEnv("NAABU_RETRIES", 3),
-			TopPorts:  getEnv("NAABU_TOP_PORTS", "1000"),
-			Interface: getEnv("NAABU_INTERFACE", ""),
-			SourceIP:  getEnv("NAABU_SOURCE_IP", ""),
-			Threads:   getIntEnv("NAABU_THREADS", 25),
+			RateLimit:  getIntEnv("NAABU_RATE_LIMIT", 1000),
+			Timeout:    getDurationEnv("NAABU_TIMEOUT", 5*time.Minute),
+			Retries:    getIntEnv("NAABU_RETRIES", 3),
+			TopPorts:   getEnv("NAABU_TOP_PORTS", "1000"),
+			Interface:  getEnv("NAABU_INTERFACE", ""),
+			SourceIP:   getEnv("NAABU_SOURCE_IP", ""),
+			Threads:    getIntEnv("NAABU_THREADS", 25),
+			MaxTargets: getIntEnv("NAABU_MAX_TARGETS", 100),
 		},
 		Nmap: NmapConfig{
 			BinaryPath:    getEnv("NMAP_BINARY_PATH", "nmap"),
