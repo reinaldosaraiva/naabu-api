@@ -8,28 +8,36 @@ import (
 	"strings"
 	"time"
 
+	"naabu-api/internal/config"
 	"naabu-api/internal/models"
 
 	"github.com/projectdiscovery/naabu/v2/pkg/result"
 	"github.com/projectdiscovery/naabu/v2/pkg/runner"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Service gerencia operações de port scanning
 type Service struct {
-	logger *logrus.Logger
+	logger *zap.Logger
+	config *config.Config
 }
 
 // NewService cria uma nova instância do serviço de scanner
-func NewService(logger *logrus.Logger) *Service {
+func NewService(logger *zap.Logger, config *config.Config) *Service {
 	return &Service{
 		logger: logger,
+		config: config,
 	}
 }
 
 // ScanPorts executa o scan de portas nos IPs especificados
 func (s *Service) ScanPorts(ctx context.Context, req models.ScanRequest) (models.ScanResponse, error) {
 	startTime := time.Now()
+	
+	s.logger.Info("Starting port scan",
+		zap.Strings("ips", req.IPs),
+		zap.String("ports", req.Ports),
+	)
 	
 	// Validar IPs
 	validIPs, err := s.validateIPs(req.IPs)
@@ -40,15 +48,18 @@ func (s *Service) ScanPorts(ctx context.Context, req models.ScanRequest) (models
 	// Preparar portas para scan
 	ports := s.preparePorts(req.Ports)
 	
-	// Executar scan para cada IP
+	// Executar scan para cada IP usando streaming JSON
 	results := make([]models.ScanResult, 0, len(validIPs))
 	totalOpenPorts := 0
 	errors := 0
 	
 	for _, ip := range validIPs {
-		result, err := s.scanSingleIP(ctx, ip, ports)
+		result, err := s.scanSingleIPStreaming(ctx, ip, ports)
 		if err != nil {
-			s.logger.WithError(err).WithField("ip", ip).Error("Erro ao escanear IP")
+			s.logger.Error("Error scanning IP",
+				zap.String("ip", ip),
+				zap.Error(err),
+			)
 			result = models.ScanResult{
 				IP:    ip,
 				Ports: []models.Port{},
@@ -74,7 +85,44 @@ func (s *Service) ScanPorts(ctx context.Context, req models.ScanRequest) (models
 		},
 	}
 	
+	s.logger.Info("Port scan completed",
+		zap.Duration("duration", duration),
+		zap.Int("total_ips", len(validIPs)),
+		zap.Int("open_ports", totalOpenPorts),
+		zap.Int("errors", errors),
+	)
+	
 	return response, nil
+}
+
+// ScanPortsStreaming executes port scan with JSON streaming output
+func (s *Service) ScanPortsStreaming(ctx context.Context, req models.ScanRequest, resultCallback func(models.Port)) error {
+	// Validar IPs
+	validIPs, err := s.validateIPs(req.IPs)
+	if err != nil {
+		return fmt.Errorf("erro na validação de IPs: %w", err)
+	}
+	
+	// Preparar portas para scan
+	ports := s.preparePorts(req.Ports)
+	
+	s.logger.Info("Starting streaming port scan",
+		zap.Strings("ips", validIPs),
+		zap.Int("total_ports", len(ports)),
+	)
+	
+	// Executar scan com streaming
+	for _, ip := range validIPs {
+		if err := s.scanSingleIPStreamingCallback(ctx, ip, ports, resultCallback); err != nil {
+			s.logger.Error("Error in streaming scan",
+				zap.String("ip", ip),
+				zap.Error(err),
+			)
+			return err
+		}
+	}
+	
+	return nil
 }
 
 // validateIPs valida e normaliza a lista de IPs
@@ -97,11 +145,15 @@ func (s *Service) validateIPs(ips []string) ([]string, error) {
 
 // preparePorts converte string de portas em slice de inteiros
 func (s *Service) preparePorts(portStr string) []int {
-	// Portas padrão se não especificadas
-	defaultPorts := []int{21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080}
+	// Use configured default ports or fallback
+	defaultPorts := []int{21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080, 873}
 	
 	if portStr == "" {
-		return defaultPorts
+		if s.config.Naabu.TopPorts != "" {
+			portStr = s.config.Naabu.TopPorts
+		} else {
+			return defaultPorts
+		}
 	}
 	
 	var ports []int
@@ -141,30 +193,42 @@ func (s *Service) preparePorts(portStr string) []int {
 	return ports
 }
 
-// scanSingleIP executa o scan em um único IP
-func (s *Service) scanSingleIP(ctx context.Context, ip string, ports []int) (models.ScanResult, error) {
+// scanSingleIPStreaming executa o scan em um único IP com novo método streaming
+func (s *Service) scanSingleIPStreaming(ctx context.Context, ip string, ports []int) (models.ScanResult, error) {
 	// Canal para capturar resultados
 	resultChan := make(chan *result.HostResult, 100)
 	
-	// Configurar opções do naabu
+	// Configurar opções do naabu com configurações do config
 	options := &runner.Options{
-		Host:           []string{ip},
-		Ports:          strings.Join(intSliceToStringSlice(ports), ","),
-		Timeout:        5000, // 5 segundos
-		Retries:        1,
-		Rate:           1000,
-		Verbose:        false,
-		Silent:         true,
+		Host:              []string{ip},
+		Ports:             strings.Join(intSliceToStringSlice(ports), ","),
+		Timeout:           int(s.config.Naabu.Timeout.Milliseconds()),
+		Retries:           s.config.Naabu.Retries,
+		Rate:              s.config.Naabu.RateLimit,
+		Threads:           s.config.Naabu.Threads,
+		Verbose:           false,
+		Silent:            true,
 		EnableProgressBar: false,
-		Verify:         false,
-		ScanAllIPS:     false,
-		OnResult:       func(hr *result.HostResult) {
+		Verify:            false,
+		ScanAllIPS:        false,
+		JSON:              true, // Enable JSON output for streaming
+		OnResult: func(hr *result.HostResult) {
 			select {
 			case resultChan <- hr:
 			default:
 				// Canal cheio, ignorar resultado
 			}
 		},
+	}
+	
+	// Set interface if configured
+	if s.config.Naabu.Interface != "" {
+		options.Interface = s.config.Naabu.Interface
+	}
+	
+	// Set source IP if configured
+	if s.config.Naabu.SourceIP != "" {
+		options.SourceIP = s.config.Naabu.SourceIP
 	}
 	
 	// Criar runner
@@ -178,15 +242,18 @@ func (s *Service) scanSingleIP(ctx context.Context, ip string, ports []int) (mod
 	go func() {
 		defer close(resultChan)
 		if err := naabuRunner.RunEnumeration(ctx); err != nil {
-			s.logger.WithError(err).WithField("ip", ip).Error("Erro na enumeração")
+			s.logger.Error("Error in enumeration",
+				zap.String("ip", ip),
+				zap.Error(err),
+			)
 		}
 	}()
 	
 	// Coletar resultados
 	var scanPorts []models.Port
 	
-	// Timeout para evitar hanging
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Timeout baseado na configuração
+	timeoutCtx, cancel := context.WithTimeout(ctx, s.config.Naabu.Timeout)
 	defer cancel()
 	
 	for {
@@ -214,6 +281,61 @@ func (s *Service) scanSingleIP(ctx context.Context, ip string, ports []int) (mod
 			return models.ScanResult{}, fmt.Errorf("timeout durante scan do IP %s", ip)
 		}
 	}
+}
+
+// scanSingleIPStreamingCallback executa scan com callback para cada porta encontrada
+func (s *Service) scanSingleIPStreamingCallback(ctx context.Context, ip string, ports []int, callback func(models.Port)) error {
+	// Configurar opções do naabu
+	options := &runner.Options{
+		Host:              []string{ip},
+		Ports:             strings.Join(intSliceToStringSlice(ports), ","),
+		Timeout:           int(s.config.Naabu.Timeout.Milliseconds()),
+		Retries:           s.config.Naabu.Retries,
+		Rate:              s.config.Naabu.RateLimit,
+		Threads:           s.config.Naabu.Threads,
+		Verbose:           false,
+		Silent:            true,
+		EnableProgressBar: false,
+		Verify:            false,
+		ScanAllIPS:        false,
+		JSON:              true,
+		OnResult: func(hr *result.HostResult) {
+			if hr != nil {
+				for _, port := range hr.Ports {
+					// Call callback for each found port
+					callback(models.Port{
+						Port:     port.Port,
+						Protocol: "tcp",
+						State:    "open",
+					})
+				}
+			}
+		},
+	}
+	
+	// Set interface if configured
+	if s.config.Naabu.Interface != "" {
+		options.Interface = s.config.Naabu.Interface
+	}
+	
+	// Set source IP if configured
+	if s.config.Naabu.SourceIP != "" {
+		options.SourceIP = s.config.Naabu.SourceIP
+	}
+	
+	// Criar runner
+	naabuRunner, err := runner.NewRunner(options)
+	if err != nil {
+		return fmt.Errorf("erro ao criar runner: %w", err)
+	}
+	defer naabuRunner.Close()
+	
+	// Execute scan
+	if err := naabuRunner.RunEnumeration(ctx); err != nil {
+		return fmt.Errorf("erro na enumeração: %w", err)
+	}
+	
+	return nil
 }
 
 // intSliceToStringSlice converte slice de inteiros para slice de strings

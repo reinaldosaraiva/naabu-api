@@ -165,15 +165,15 @@ func (h *Handler) CreateScanJob(c *gin.Context) {
 		return
 	}
 	
-	// Enviar para fila de processamento
-	if err := h.worker.SubmitQuickScan(scanID, req.IPs, req.Ports); err != nil {
-		reqLogger.Error("Erro ao enviar job para processamento", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:     "Erro ao iniciar processamento",
-			RequestID: h.getRequestID(c),
-		})
-		return
-	}
+	// Enviar para fila de processamento usando ExecuteAsync
+	go func() {
+		if err := h.worker.ExecuteAsync(c.Request.Context(), scanID, req); err != nil {
+			reqLogger.Error("Erro ao processar job assíncrono", 
+				zap.Error(err),
+				zap.String("scan_id", scanID.String()),
+			)
+		}
+	}()
 	
 	reqLogger.Info("Job de scan criado",
 		zap.String("scan_id", scanID.String()),
@@ -211,45 +211,26 @@ func (h *Handler) QuickScan(c *gin.Context) {
 		return
 	}
 	
-	// Para compatibilidade, criar um scan assíncrono
-	scanID := uuid.New()
-	job := &models.ScanJob{
-		ScanID:    scanID,
-		Status:    models.JobStatusQueued,
-		IPs:       h.encodeIPs(req.IPs),
-		Ports:     req.Ports,
-		CreatedAt: time.Now(),
-	}
-	
-	if err := h.repo.CreateScanJob(job); err != nil {
-		reqLogger.Error("Erro ao criar job", zap.Error(err))
+	// Executar scan síncrono através do worker
+	response, err := h.worker.ExecuteSync(c.Request.Context(), req)
+	if err != nil {
+		reqLogger.Error("Erro durante scan", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:     "Erro ao criar job",
+			Error:     "Erro durante scan",
 			RequestID: h.getRequestID(c),
 		})
 		return
 	}
 	
-	// Enviar para processamento
-	if err := h.worker.SubmitQuickScan(scanID, req.IPs, req.Ports); err != nil {
-		reqLogger.Error("Erro ao enviar job para processamento", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:     "Erro ao iniciar processamento",
-			RequestID: h.getRequestID(c),
-		})
-		return
-	}
+	// Adicionar request ID à resposta
+	response.RequestID = h.getRequestID(c)
 	
-	reqLogger.Info("Scan criado via endpoint de compatibilidade",
-		zap.String("scan_id", scanID.String()),
-		zap.Int("ip_count", len(req.IPs)),
+	reqLogger.Info("Scan síncrono concluído",
+		zap.Int("total_ips", response.Summary.TotalIPs),
+		zap.Int("open_ports", response.Summary.OpenPorts),
 	)
 	
-	c.JSON(http.StatusAccepted, models.AsyncScanResponse{
-		ScanID:  scanID,
-		Status:  job.Status,
-		Message: "Scan criado. Use GET /api/v1/jobs/" + scanID.String() + " para acompanhar",
-	})
+	c.JSON(http.StatusOK, response)
 }
 
 // ListJobs lista todos os jobs ativos
@@ -458,8 +439,11 @@ func (h *Handler) validateScanRequest(req models.ScanRequest) error {
 		return fmt.Errorf("campo 'ips' é obrigatório e não pode estar vazio")
 	}
 	
-	// Usar valor padrão de 100 IPs
+	// Verificar configuração ou usar valor padrão
 	maxIPs := 100
+	if h.config != nil && h.config.Naabu.MaxTargets > 0 {
+		maxIPs = h.config.Naabu.MaxTargets
+	}
 	
 	if len(req.IPs) > maxIPs {
 		return fmt.Errorf("máximo de %d IPs permitidos por requisição", maxIPs)
