@@ -22,13 +22,14 @@ const (
 type ProbeType string
 
 const (
-	ProbeTypeFTP   ProbeType = "ftp"
-	ProbeTypeVNC   ProbeType = "vnc"
-	ProbeTypeRDP   ProbeType = "rdp"
-	ProbeTypeLDAP  ProbeType = "ldap"
-	ProbeTypePPTP  ProbeType = "pptp"
-	ProbeTypeRsync ProbeType = "rsync"
-	ProbeTypeSSH   ProbeType = "ssh"
+	ProbeTypeFTP       ProbeType = "ftp"
+	ProbeTypeVNC       ProbeType = "vnc"
+	ProbeTypeRDP       ProbeType = "rdp"
+	ProbeTypeLDAP      ProbeType = "ldap"
+	ProbeTypePPTP      ProbeType = "pptp"
+	ProbeTypeRsync     ProbeType = "rsync"
+	ProbeTypeSSHCipher ProbeType = "ssh_weak_cipher"
+	ProbeTypeSSHMAC    ProbeType = "ssh_weak_mac"
 )
 
 // ScanRequest representa a requisição de scan
@@ -214,6 +215,25 @@ type RsyncProbeConfig struct {
 type SSHProbeConfig struct {
 	ProbeConfig
 	TestWeakMACs bool `json:"test_weak_macs"`
+}
+
+// NetworkSecurityCheck represents the status and evidence of a security check
+type NetworkSecurityCheck struct {
+	Status   string      `json:"status"`   // "ok" or "risk"
+	Evidence interface{} `json:"evidence"` // string or array
+}
+
+// NetworkSecurityResponse represents the consolidated network security status
+type NetworkSecurityResponse struct {
+	ScanID              uuid.UUID             `json:"scan_id"`
+	FTPAnonymousLogin   NetworkSecurityCheck  `json:"ftp_anonymous_login"`
+	VNCAccessible       NetworkSecurityCheck  `json:"vnc_accessible"`
+	RDPAccessible       NetworkSecurityCheck  `json:"rdp_accessible"`
+	LDAPAccessible      NetworkSecurityCheck  `json:"ldap_accessible"`
+	PPTPAccessible      NetworkSecurityCheck  `json:"pptp_accessible"`
+	RsyncAccessible     NetworkSecurityCheck  `json:"rsync_accessible"`
+	SSHWeakCipher       NetworkSecurityCheck  `json:"ssh_weak_cipher"`
+	SSHWeakMAC          NetworkSecurityCheck  `json:"ssh_weak_mac"`
 }
 
 // Migration helpers

@@ -60,6 +60,9 @@ func (h *Handler) SetupRoutes(r *gin.Engine) {
 		v1.GET("/jobs/:id", h.GetJob)
 		v1.DELETE("/jobs/:id", h.CancelJob)
 		
+		// Network security endpoints
+		v1.GET("/scans/:id/network", h.GetNetworkSecurity)
+		
 		// Stats endpoints
 		v1.GET("/stats", h.GetStats)
 	}
@@ -536,4 +539,127 @@ func (h *Handler) isValidHostname(hostname string) bool {
 	}
 	
 	return true
+}
+
+// GetNetworkSecurity returns consolidated network security check results
+func (h *Handler) GetNetworkSecurity(c *gin.Context) {
+	reqLogger := h.getLogger(c)
+	scanIDStr := c.Param("id")
+	
+	if scanIDStr == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:     "Scan ID is required",
+			RequestID: h.getRequestID(c),
+		})
+		return
+	}
+	
+	// Parse UUID
+	scanID, err := uuid.Parse(scanIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:     "Invalid scan ID format",
+			RequestID: h.getRequestID(c),
+		})
+		return
+	}
+	
+	// Check if scan exists
+	job, err := h.repo.GetScanJobByID(scanID)
+	if err != nil {
+		reqLogger.Error("Error finding scan job", zap.Error(err), zap.String("scan_id", scanID.String()))
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:     "Scan not found",
+			RequestID: h.getRequestID(c),
+		})
+		return
+	}
+	
+	// Get probe results for this scan
+	probeResults, err := h.repo.GetProbeResultsByScanID(scanID)
+	if err != nil {
+		reqLogger.Error("Error getting probe results", zap.Error(err), zap.String("scan_id", scanID.String()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:     "Error getting probe results",
+			RequestID: h.getRequestID(c),
+		})
+		return
+	}
+	
+	// Build network security response
+	response := h.buildNetworkSecurityResponse(scanID, probeResults)
+	
+	reqLogger.Info("Network security status retrieved",
+		zap.String("scan_id", scanID.String()),
+		zap.String("job_status", string(job.Status)),
+		zap.Int("probe_results", len(probeResults)),
+	)
+	
+	c.JSON(http.StatusOK, response)
+}
+
+// buildNetworkSecurityResponse builds the consolidated network security response
+func (h *Handler) buildNetworkSecurityResponse(scanID uuid.UUID, probeResults []models.ProbeResult) models.NetworkSecurityResponse {
+	// Initialize response with default "ok" status
+	response := models.NetworkSecurityResponse{
+		ScanID: scanID,
+		FTPAnonymousLogin:   models.NetworkSecurityCheck{Status: "ok", Evidence: "No FTP anonymous login vulnerabilities detected"},
+		VNCAccessible:       models.NetworkSecurityCheck{Status: "ok", Evidence: "No VNC accessibility issues detected"},
+		RDPAccessible:       models.NetworkSecurityCheck{Status: "ok", Evidence: "No RDP accessibility issues detected"},
+		LDAPAccessible:      models.NetworkSecurityCheck{Status: "ok", Evidence: "No LDAP accessibility issues detected"},
+		PPTPAccessible:      models.NetworkSecurityCheck{Status: "ok", Evidence: "No PPTP accessibility issues detected"},
+		RsyncAccessible:     models.NetworkSecurityCheck{Status: "ok", Evidence: "No Rsync accessibility issues detected"},
+		SSHWeakCipher:       models.NetworkSecurityCheck{Status: "ok", Evidence: "No SSH weak cipher vulnerabilities detected"},
+		SSHWeakMAC:          models.NetworkSecurityCheck{Status: "ok", Evidence: "No SSH weak MAC vulnerabilities detected"},
+	}
+	
+	// Process probe results and update status for vulnerabilities
+	for _, result := range probeResults {
+		if result.IsVulnerable {
+			switch result.ProbeType {
+			case models.ProbeTypeFTP:
+				response.FTPAnonymousLogin = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeVNC:
+				response.VNCAccessible = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeRDP:
+				response.RDPAccessible = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeLDAP:
+				response.LDAPAccessible = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypePPTP:
+				response.PPTPAccessible = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeRsync:
+				response.RsyncAccessible = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeSSHCipher:
+				response.SSHWeakCipher = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			case models.ProbeTypeSSHMAC:
+				response.SSHWeakMAC = models.NetworkSecurityCheck{
+					Status:   "risk",
+					Evidence: result.Evidence,
+				}
+			}
+		}
+	}
+	
+	return response
 }

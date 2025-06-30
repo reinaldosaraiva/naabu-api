@@ -43,7 +43,7 @@ curl http://localhost:8082/health
 ## 📋 Características Principais
 
 - ✅ **Port Scanning com Naabu** - Scanner rápido e eficiente
-- ✅ **7 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync, SSH
+- ✅ **8 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync, SSH (cifras fracas), SSH (MACs fracos)
 - ✅ **Deep Scanning Automático** - Nmap NSE scripts quando vulnerabilidades são detectadas
 - ✅ **Suporte Completo** - IPs, hostnames e notação CIDR
 - ✅ **Worker Pools** - 3 pools especializados para máxima performance
@@ -138,7 +138,8 @@ A API detecta automaticamente as seguintes vulnerabilidades:
 | **LDAP** | 389, 636 | Bind anônimo permitido |
 | **PPTP** | 1723 | VPN legacy vulnerável |
 | **rsync** | 873 | Módulos públicos acessíveis |
-| **SSH** | 22 | Cifras fracas (CBC, 3DES) e MACs fracos (MD5, SHA1-96) |
+| **SSH Cipher** | 22 | Cifras fracas (CBC, 3DES, arcfour) |
+| **SSH MAC** | 22 | MACs fracos (MD5, SHA1-96, RIPEMD) |
 
 ## 🚨 Novo: Detecção de SSH com Algoritmos Fracos
 
@@ -291,14 +292,74 @@ curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq '.deep_scans[0].nse_scri
 xmllint --noout nmap_output.xml && echo "XML válido!"
 ```
 
-### Requisito 6: Todos os Probes Funcionando (Agora com SSH!)
+### Requisito 6: Endpoint de Network Security Consolidado
+
+```bash
+# 1. Criar um scan completo
+SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.1", "scanme.nmap.org"],
+    "ports": "21,22,389,873,1723,3389,5900",
+    "enable_probes": true
+  }' | jq -r '.scan_id')
+
+echo "Scan ID: $SCAN_ID"
+
+# 2. Aguardar processamento
+sleep 30
+
+# 3. Obter status consolidado de network security
+curl -s http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.'
+```
+
+**Resposta esperada:**
+```json
+{
+  "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ftp_anonymous_login": {
+    "status": "risk",
+    "evidence": "Anonymous FTP login successful (230 code). Banner: vsftpd 3.0.3"
+  },
+  "vnc_accessible": {
+    "status": "ok",
+    "evidence": "No VNC accessibility issues detected"
+  },
+  "rdp_accessible": {
+    "status": "ok",
+    "evidence": "No RDP accessibility issues detected"
+  },
+  "ldap_accessible": {
+    "status": "ok",
+    "evidence": "No LDAP accessibility issues detected"
+  },
+  "pptp_accessible": {
+    "status": "ok",
+    "evidence": "No PPTP accessibility issues detected"
+  },
+  "rsync_accessible": {
+    "status": "risk",
+    "evidence": "rsync service allows listing: [module1] [module2]"
+  },
+  "ssh_weak_cipher": {
+    "status": "risk",
+    "evidence": "SSH server supports weak ciphers: aes128-cbc, 3des-cbc"
+  },
+  "ssh_weak_mac": {
+    "status": "ok",
+    "evidence": "No SSH weak MAC vulnerabilities detected"
+  }
+}
+```
+
+### Requisito 7: Todos os Probes Funcionando (Agora são 8!)
 
 ```bash
 # Criar arquivo com alvos de teste para cada probe
 cat > test_all_probes.sh << 'EOF'
 #!/bin/bash
 
-echo "=== Testando todos os 7 probes ==="
+echo "=== Testando todos os 8 probes ==="
 
 # FTP Probe (porta 21)
 echo -e "\n1. Testando FTP..."
@@ -336,11 +397,17 @@ curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["rsync.samba.org"], "ports": "873", "enable_probes": true}'
 
-# SSH Probe (porta 22) - NOVO!
-echo -e "\n7. Testando SSH (cifras e MACs fracos)..."
+# SSH Weak Cipher Probe (porta 22)
+echo -e "\n7. Testando SSH Weak Ciphers..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
-  -d '{"ips": ["github.com", "192.168.1.1"], "ports": "22", "enable_probes": true}'
+  -d '{"ips": ["github.com"], "ports": "22", "enable_probes": true}'
+
+# SSH Weak MAC Probe (porta 22)
+echo -e "\n8. Testando SSH Weak MACs..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["gitlab.com"], "ports": "22", "enable_probes": true}'
 
 echo -e "\n\nTodos os scans criados! Use 'curl http://localhost:8082/api/v1/jobs' para ver status"
 EOF
@@ -440,6 +507,7 @@ done
 | `GET` | `/api/v1/jobs` | Listar todos os jobs |
 | `GET` | `/api/v1/jobs/:id` | Detalhes de um job |
 | `DELETE` | `/api/v1/jobs/:id` | Cancelar um job |
+| `GET` | `/api/v1/scans/:id/network` | Status consolidado de network security |
 | `GET` | `/docs/` | Documentação Swagger |
 
 ## 📝 Parâmetros de Scan

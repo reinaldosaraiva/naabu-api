@@ -27,7 +27,8 @@ func NewManager(logger *zap.Logger) *Manager {
 			NewLDAPProbe(),
 			NewPPTPProbe(),
 			NewRsyncProbe(),
-			NewSSHProbe(logger),
+			NewSSHCipherProbe(logger),
+			NewSSHMACProbe(logger),
 		},
 		logger: logger,
 	}

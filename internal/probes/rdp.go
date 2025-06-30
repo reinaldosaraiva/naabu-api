@@ -104,7 +104,7 @@ func (p *RDPProbe) Probe(ctx context.Context, ip string, port int) (*models.Prob
 	for i := 7; i < n-4; i++ {
 		if response[i] == 0x02 { // TYPE_RDP_NEG_RSP
 			if i+7 < n {
-				selectedProtocol := response[i+4] | (response[i+5] << 8) | (response[i+6] << 16) | (response[i+7] << 24)
+				selectedProtocol := uint32(response[i+4]) | (uint32(response[i+5]) << 8) | (uint32(response[i+6]) << 16) | (uint32(response[i+7]) << 24)
 				switch selectedProtocol {
 				case 0x00000000:
 					protocolDetected = "Standard RDP"
