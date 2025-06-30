@@ -43,7 +43,7 @@ curl http://localhost:8082/health
 ## 📋 Características Principais
 
 - ✅ **Port Scanning com Naabu** - Scanner rápido e eficiente
-- ✅ **6 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync
+- ✅ **7 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync, SSH
 - ✅ **Deep Scanning Automático** - Nmap NSE scripts quando vulnerabilidades são detectadas
 - ✅ **Suporte Completo** - IPs, hostnames e notação CIDR
 - ✅ **Worker Pools** - 3 pools especializados para máxima performance
@@ -138,6 +138,57 @@ A API detecta automaticamente as seguintes vulnerabilidades:
 | **LDAP** | 389, 636 | Bind anônimo permitido |
 | **PPTP** | 1723 | VPN legacy vulnerável |
 | **rsync** | 873 | Módulos públicos acessíveis |
+| **SSH** | 22 | Cifras fracas (CBC, 3DES) e MACs fracos (MD5, SHA1-96) |
+
+## 🚨 Novo: Detecção de SSH com Algoritmos Fracos
+
+### Como usar o SSH Probe
+
+```bash
+# Scan básico para SSH
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.1"],
+    "ports": "22",
+    "enable_probes": true
+  }'
+
+# Scan de múltiplos servidores SSH
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["github.com", "gitlab.com", "192.168.1.0/24"],
+    "ports": "22,2222",
+    "enable_probes": true
+  }'
+```
+
+### O que o SSH Probe detecta
+
+1. **Cifras Fracas (US-7)**:
+   - CBC mode: aes128-cbc, aes192-cbc, aes256-cbc
+   - Legacy: 3des-cbc, blowfish-cbc, cast128-cbc
+   - Inseguras: arcfour, arcfour128, arcfour256
+
+2. **MACs Fracos (US-8)**:
+   - MD5: hmac-md5, hmac-md5-96
+   - SHA1 curto: hmac-sha1-96
+   - Obsoletos: hmac-ripemd160, umac-64
+
+### Exemplo de Resultado Vulnerável
+
+```json
+{
+  "host": "192.168.1.1",
+  "port": 22,
+  "probe_type": "ssh",
+  "service_name": "ssh",
+  "service_version": "SSH-2.0-OpenSSH_7.4",
+  "is_vulnerable": true,
+  "evidence": "SSH server supports weak ciphers: aes128-cbc, 3des-cbc | All server ciphers: aes128-cbc, aes256-cbc, 3des-cbc, aes128-ctr | SSH server supports weak MAC algorithms: hmac-md5, hmac-sha1-96 | All server MACs: hmac-md5, hmac-sha1-96, hmac-sha2-256"
+}
+```
 
 ## 🎯 Testando os 6 Requisitos do Épico
 
@@ -240,14 +291,14 @@ curl -s http://localhost:8082/api/v1/jobs/$SCAN_ID | jq '.deep_scans[0].nse_scri
 xmllint --noout nmap_output.xml && echo "XML válido!"
 ```
 
-### Requisito 6: Todos os 6 Probes Funcionando
+### Requisito 6: Todos os Probes Funcionando (Agora com SSH!)
 
 ```bash
 # Criar arquivo com alvos de teste para cada probe
 cat > test_all_probes.sh << 'EOF'
 #!/bin/bash
 
-echo "=== Testando todos os 6 probes ==="
+echo "=== Testando todos os 7 probes ==="
 
 # FTP Probe (porta 21)
 echo -e "\n1. Testando FTP..."
@@ -284,6 +335,12 @@ echo -e "\n6. Testando rsync..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["rsync.samba.org"], "ports": "873", "enable_probes": true}'
+
+# SSH Probe (porta 22) - NOVO!
+echo -e "\n7. Testando SSH (cifras e MACs fracos)..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["github.com", "192.168.1.1"], "ports": "22", "enable_probes": true}'
 
 echo -e "\n\nTodos os scans criados! Use 'curl http://localhost:8082/api/v1/jobs' para ver status"
 EOF
