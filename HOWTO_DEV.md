@@ -6,7 +6,8 @@ Guia prático para desenvolvedores testarem e utilizarem a API de descoberta de 
 
 Este guia demonstra como usar a Naabu API para:
 - Descobrir portas abertas em alvos
-- Detectar vulnerabilidades com 7 probes especializados
+- Detectar vulnerabilidades com 8 probes especializados
+- Obter status consolidado de network security
 - Interpretar resultados e evidências
 - Ativar deep scanning automático
 
@@ -177,56 +178,62 @@ curl -X POST http://localhost:8082/scan \
 
 ---
 
-## 🧪 Teste 5: Todos os 7 Probes
+## 🧪 Teste 5: Todos os 8 Probes
 
 ### Script automatizado:
 ```bash
 cat > test_all_probes.sh << 'EOF'
 #!/bin/bash
 
-echo "=== Testando todos os 7 probes ==="
-
-# SSH Probe (porta 22)
-echo -e "\n🔐 1. Testando SSH..."
-curl -s -X POST http://localhost:8082/scan \
-  -H "Content-Type: application/json" \
-  -d '{"ips": ["github.com"], "ports": "22", "enable_probes": true}'
+echo "=== Testando todos os 8 probes ==="
 
 # FTP Probe (porta 21)  
-echo -e "\n📁 2. Testando FTP..."
+echo -e "\n📁 1. Testando FTP..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["ftp.debian.org"], "ports": "21", "enable_probes": true}'
 
 # VNC Probe (porta 5900)
-echo -e "\n🖥️ 3. Testando VNC..."
+echo -e "\n🖥️ 2. Testando VNC..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.100"], "ports": "5900-5910", "enable_probes": true}'
 
 # RDP Probe (porta 3389)
-echo -e "\n🖱️ 4. Testando RDP..."
+echo -e "\n🖱️ 3. Testando RDP..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.10"], "ports": "3389", "enable_probes": true}'
 
 # LDAP Probe (porta 389)
-echo -e "\n📚 5. Testando LDAP..."
+echo -e "\n📚 4. Testando LDAP..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["ldap.forumsys.com"], "ports": "389", "enable_probes": true}'
 
 # PPTP Probe (porta 1723)
-echo -e "\n🌐 6. Testando PPTP..."
+echo -e "\n🌐 5. Testando PPTP..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.1"], "ports": "1723", "enable_probes": true}'
 
 # rsync Probe (porta 873)
-echo -e "\n🔄 7. Testando rsync..."
+echo -e "\n🔄 6. Testando rsync..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["rsync.samba.org"], "ports": "873", "enable_probes": true}'
+
+# SSH Weak Cipher Probe (porta 22)
+echo -e "\n🔐 7. Testando SSH Weak Ciphers..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["github.com"], "ports": "22", "enable_probes": true}'
+
+# SSH Weak MAC Probe (porta 22)
+echo -e "\n🔐 8. Testando SSH Weak MACs..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["gitlab.com"], "ports": "22", "enable_probes": true}'
 
 echo -e "\n\n✅ Todos os scans criados!"
 EOF
@@ -234,6 +241,73 @@ EOF
 chmod +x test_all_probes.sh
 ./test_all_probes.sh
 ```
+
+---
+
+## 🔒 Teste 6: Endpoint de Network Security Consolidado
+
+### Comando:
+```bash
+# 1. Criar scan
+SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["192.168.1.1", "scanme.nmap.org"],
+    "ports": "21,22,389,873,1723,3389,5900",
+    "enable_probes": true
+  }' | jq -r '.scan_id')
+
+# 2. Aguardar processamento
+sleep 30
+
+# 3. Obter status consolidado
+curl -s http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.'
+```
+
+### Resultado esperado:
+```json
+{
+  "scan_id": "550e8400-e29b-41d4-a716-446655440000",
+  "ftp_anonymous_login": {
+    "status": "ok",
+    "evidence": "No FTP anonymous login vulnerabilities detected"
+  },
+  "vnc_accessible": {
+    "status": "ok",
+    "evidence": "No VNC accessibility issues detected"
+  },
+  "rdp_accessible": {
+    "status": "risk",
+    "evidence": "RDP server uses Standard RDP protocol without encryption"
+  },
+  "ldap_accessible": {
+    "status": "ok",
+    "evidence": "No LDAP accessibility issues detected"
+  },
+  "pptp_accessible": {
+    "status": "ok",
+    "evidence": "No PPTP accessibility issues detected"
+  },
+  "rsync_accessible": {
+    "status": "ok",
+    "evidence": "No Rsync accessibility issues detected"
+  },
+  "ssh_weak_cipher": {
+    "status": "risk",
+    "evidence": "SSH server supports weak ciphers: aes128-cbc, 3des-cbc"
+  },
+  "ssh_weak_mac": {
+    "status": "ok",
+    "evidence": "No SSH weak MAC vulnerabilities detected"
+  }
+}
+```
+
+### O que acontece:
+1. **Consolidação** - Todos os 8 checks em uma única resposta
+2. **Status binário** - Sempre "ok" ou "risk"
+3. **Evidence obrigatório** - Sempre presente, mesmo quando "ok"
+4. **Formato padronizado** - Facilita integração com dashboards
 
 ---
 

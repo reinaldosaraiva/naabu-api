@@ -6,7 +6,7 @@ info:
     
     ## Funcionalidades
     - Port scanning com Naabu
-    - Detecção de vulnerabilidades com 6 probes especializados
+    - Detecção de vulnerabilidades com 8 probes especializados
     - Deep scanning automático com Nmap NSE
     - Suporte a IPs, hostnames e notação CIDR
     
@@ -17,6 +17,8 @@ info:
     - **LDAP**: Identifica LDAP com bind anônimo
     - **PPTP**: Detecta VPN legacy vulnerável
     - **rsync**: Identifica módulos rsync acessíveis
+    - **SSH Cipher**: Detecta SSH com cifras fracas (CBC, 3DES, arcfour)
+    - **SSH MAC**: Detecta SSH com MACs fracos (MD5, SHA1-96, RIPEMD)
   version: 2.0.0
   contact:
     name: API Support
@@ -163,6 +165,77 @@ paths:
                   failed: 5
                   cancelled: 0
                 timestamp: "2025-06-29T18:30:00Z"
+
+  /api/v1/scans/{scan_id}/network:
+    get:
+      summary: Status consolidado de network security
+      description: |
+        Retorna o status consolidado de todos os 8 checks de network security
+        para um scan específico. Cada check retorna status "ok" ou "risk" com
+        evidências detalhadas.
+      operationId: getNetworkSecurity
+      tags:
+        - Scanning
+      parameters:
+        - name: scan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID único do scan
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Status de network security
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSecurityResponse'
+              example:
+                scan_id: "550e8400-e29b-41d4-a716-446655440000"
+                ftp_anonymous_login:
+                  status: "risk"
+                  evidence: "Anonymous FTP login successful (230 code). Banner: vsftpd 3.0.3"
+                vnc_accessible:
+                  status: "ok"
+                  evidence: "No VNC accessibility issues detected"
+                rdp_accessible:
+                  status: "ok"
+                  evidence: "No RDP accessibility issues detected"
+                ldap_accessible:
+                  status: "ok"
+                  evidence: "No LDAP accessibility issues detected"
+                pptp_accessible:
+                  status: "ok"
+                  evidence: "No PPTP accessibility issues detected"
+                rsync_accessible:
+                  status: "risk"
+                  evidence: "rsync service allows listing: [module1] [module2]"
+                ssh_weak_cipher:
+                  status: "risk"
+                  evidence: "SSH server supports weak ciphers: aes128-cbc, 3des-cbc"
+                ssh_weak_mac:
+                  status: "ok"
+                  evidence: "No SSH weak MAC vulnerabilities detected"
+        '400':
+          description: ID de scan inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid scan ID format"
+                request_id: "req-123"
+        '404':
+          description: Scan não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Scan not found"
+                request_id: "req-124"
 
 components:
   schemas:
@@ -347,7 +420,7 @@ components:
       properties:
         probe_type:
           type: string
-          enum: [ftp, vnc, rdp, ldap, pptp, rsync]
+          enum: [ftp, vnc, rdp, ldap, pptp, rsync, ssh_weak_cipher, ssh_weak_mac]
         port:
           type: integer
         is_vulnerable:
@@ -381,6 +454,58 @@ components:
           type: integer
         errors:
           type: integer
+
+    NetworkSecurityResponse:
+      type: object
+      properties:
+        scan_id:
+          type: string
+          format: uuid
+          description: ID único do scan
+        ftp_anonymous_login:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        vnc_accessible:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        rdp_accessible:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        ldap_accessible:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        pptp_accessible:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        rsync_accessible:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        ssh_weak_cipher:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+        ssh_weak_mac:
+          $ref: '#/components/schemas/NetworkSecurityCheck'
+      required:
+        - scan_id
+        - ftp_anonymous_login
+        - vnc_accessible
+        - rdp_accessible
+        - ldap_accessible
+        - pptp_accessible
+        - rsync_accessible
+        - ssh_weak_cipher
+        - ssh_weak_mac
+
+    NetworkSecurityCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, risk]
+          description: Status do check de segurança
+        evidence:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Evidência detalhada do resultado
+      required:
+        - status
+        - evidence
 
   securitySchemes:
     ApiKeyAuth:

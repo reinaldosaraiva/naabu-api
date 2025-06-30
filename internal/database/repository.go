@@ -64,8 +64,7 @@ func (r *repository) CreateScanJob(job *models.ScanJob) error {
 
 func (r *repository) GetScanJobByID(scanID uuid.UUID) (*models.ScanJob, error) {
 	var job models.ScanJob
-	err := r.db.Preload("ProbeResults").Preload("DeepScans").
-		Where("scan_id = ?", scanID).First(&job).Error
+	err := r.db.Where("scan_id = ?", scanID).First(&job).Error
 	if err != nil {
 		return nil, err
 	}
