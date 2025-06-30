@@ -123,6 +123,7 @@ func main() {
 	router.POST("/scan", handler.CreateScanJob)
 	router.GET("/health", handler.HealthHandler)
 	router.GET("/metrics", handler.MetricsHandler)
+	router.GET("/api/v1/scans/:id/network", handler.GetNetworkSecurity)
 	
 	// Swagger documentation
 	router.Static("/docs", "./docs")
