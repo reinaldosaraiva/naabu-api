@@ -29,6 +29,11 @@ go.work.sum
 coverage.out
 coverage.html
 
+# Build artifacts
+/naabu-api
+/build/
+dist/
+
 # IDE files
 .vscode/
 .idea/
@@ -44,3 +49,8 @@ coverage.html
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
