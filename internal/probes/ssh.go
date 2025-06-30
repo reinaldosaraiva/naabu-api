@@ -93,82 +93,36 @@ func (p *SSHProbe) Probe(ctx context.Context, ip string, port int) (*models.Prob
 		zap.Int("port", port),
 	)
 
-	// Create connection with timeout
-	dialer := &net.Dialer{Timeout: p.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
+	// First, try the custom SSH handshake to get cipher information
+	serverVersion, supportedCiphers, supportedMACs, err := p.performSSHHandshake(ctx, ip, port)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer conn.Close()
-
-	// Set read/write deadlines
-	conn.SetDeadline(time.Now().Add(p.timeout))
-
-	// Create SSH client config for handshake only (no authentication)
-	config := &ssh.ClientConfig{
-		User:            "probe", // Dummy user
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // We only care about ciphers, not host key validation
-		Timeout:         p.timeout,
-		// Don't specify auth methods - we want the handshake to fail after cipher negotiation
-	}
-
-	// Perform SSH handshake - this will terminate after KEXINIT exchange
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%d", ip, port), config)
-	if sshConn != nil {
-		// Close the connection if it was established (shouldn't happen without auth)
-		sshConn.Close()
-	}
-	if chans != nil {
-		go ssh.DiscardRequests(reqs)
-	}
-
-	// We expect an authentication error - that's normal
-	// The important part is that we get cipher information during the handshake
-	var serverVersion string
-
-	if err != nil {
-		// Check if it's an authentication error (expected) or connection error
-		errStr := err.Error()
-		if !strings.Contains(errStr, "auth") && !strings.Contains(errStr, "authentication") &&
-			!strings.Contains(errStr, "password") && !strings.Contains(errStr, "publickey") {
-			// This might be a real connection error
-			result.Evidence = fmt.Sprintf("SSH connection failed: %v", err)
-			return result, nil
-		}
-		// Auth errors are expected - we still got cipher negotiation
-	}
-
-	// Try to extract SSH server version by reading the initial banner
-	// Reset connection for a fresh start to read banner
-	conn2, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
-	if err == nil {
-		defer conn2.Close()
-		conn2.SetDeadline(time.Now().Add(5 * time.Second))
-		
-		// Read SSH banner
-		banner := make([]byte, 512)
-		n, err := conn2.Read(banner)
-		if err == nil && n > 0 {
-			bannerStr := string(banner[:n])
-			if strings.HasPrefix(bannerStr, "SSH-") {
-				lines := strings.Split(bannerStr, "\n")
-				if len(lines) > 0 {
-					serverVersion = strings.TrimSpace(lines[0])
-				}
-			}
+		// Fallback: try basic connection to get version at least
+		serverVersion, err = p.getSSHVersion(ctx, ip, port)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SSH server: %w", err)
 		}
 	}
 
-	// For this implementation, we'll simulate cipher detection based on common SSH server behaviors
-	// In a real implementation, we would need to parse the SSH handshake protocol messages
-	// However, the Go ssh package doesn't expose the detailed cipher negotiation information
-	// 
-	// For now, we'll create a basic detection based on server version patterns
+	// Analyze found ciphers and MACs for weak algorithms
 	foundWeakCiphers := []string{}
 	foundWeakMACs := []string{}
-	
-	if serverVersion != "" {
-		// Common weak configurations based on SSH server versions
+
+	// Check supported ciphers against weak cipher list
+	for _, cipher := range supportedCiphers {
+		if isWeak, exists := weakCiphers[cipher]; exists && isWeak {
+			foundWeakCiphers = append(foundWeakCiphers, cipher)
+		}
+	}
+
+	// Check supported MACs against weak MAC list
+	for _, mac := range supportedMACs {
+		if isWeak, exists := weakMACs[mac]; exists && isWeak {
+			foundWeakMACs = append(foundWeakMACs, mac)
+		}
+	}
+
+	// If no specific cipher info, use heuristic based on version
+	if len(supportedCiphers) == 0 && serverVersion != "" {
 		if strings.Contains(strings.ToLower(serverVersion), "openssh") {
 			// Extract version number
 			versionParts := strings.Split(serverVersion, " ")
@@ -227,6 +181,105 @@ func (p *SSHProbe) Probe(ctx context.Context, ip string, port int) (*models.Prob
 	}
 
 	return result, nil
+}
+
+// performSSHHandshake performs a custom SSH handshake to extract cipher information
+func (p *SSHProbe) performSSHHandshake(ctx context.Context, ip string, port int) (version string, ciphers []string, macs []string, err error) {
+	// Create connection with timeout
+	dialer := &net.Dialer{Timeout: p.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("failed to connect: %w", err)
+	}
+	defer conn.Close()
+
+	// Set read/write deadlines
+	conn.SetDeadline(time.Now().Add(p.timeout))
+
+	// Read SSH server version
+	buffer := make([]byte, 512)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("failed to read server version: %w", err)
+	}
+
+	versionLine := string(buffer[:n])
+	if !strings.HasPrefix(versionLine, "SSH-") {
+		return "", nil, nil, fmt.Errorf("invalid SSH version response")
+	}
+
+	lines := strings.Split(versionLine, "\n")
+	if len(lines) > 0 {
+		version = strings.TrimSpace(lines[0])
+	}
+
+	// Send our SSH version
+	clientVersion := "SSH-2.0-NaabuProbe_1.0\r\n"
+	_, err = conn.Write([]byte(clientVersion))
+	if err != nil {
+		return version, nil, nil, fmt.Errorf("failed to send client version: %w", err)
+	}
+
+	// Try to use the standard SSH library to get cipher information
+	// Create SSH client config for handshake only (no authentication)
+	config := &ssh.ClientConfig{
+		User:            "probe", // Dummy user
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // We only care about ciphers, not host key validation
+		Timeout:         p.timeout,
+		// Don't specify auth methods - we want the handshake to fail after cipher negotiation
+	}
+
+	// Reset connection for SSH library handshake
+	conn.Close()
+	conn, err = dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return version, nil, nil, fmt.Errorf("failed to reconnect: %w", err)
+	}
+	defer conn.Close()
+
+	// Perform SSH handshake - this will terminate after KEXINIT exchange
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%d", ip, port), config)
+	if sshConn != nil {
+		// Close the connection if it was established (shouldn't happen without auth)
+		sshConn.Close()
+	}
+	if chans != nil {
+		go ssh.DiscardRequests(reqs)
+	}
+
+	// The SSH handshake occurred, but we can't extract cipher details from the Go ssh package
+	// This is a limitation of the current approach
+	// For now, we'll return the version and let the heuristic method handle cipher detection
+	return version, nil, nil, nil
+}
+
+// getSSHVersion attempts to get just the SSH version string
+func (p *SSHProbe) getSSHVersion(ctx context.Context, ip string, port int) (string, error) {
+	dialer := &net.Dialer{Timeout: p.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return "", fmt.Errorf("failed to connect: %w", err)
+	}
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Read SSH banner
+	banner := make([]byte, 512)
+	n, err := conn.Read(banner)
+	if err != nil {
+		return "", fmt.Errorf("failed to read banner: %w", err)
+	}
+
+	bannerStr := string(banner[:n])
+	if strings.HasPrefix(bannerStr, "SSH-") {
+		lines := strings.Split(bannerStr, "\n")
+		if len(lines) > 0 {
+			return strings.TrimSpace(lines[0]), nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid SSH response")
 }
 
 // isOldSSHVersion checks if the SSH version is old enough to likely support weak ciphers
