@@ -64,6 +64,15 @@ Implementação completa do épico de descoberta e validação de exposições d
 - ✅ Then vuln=true se flag rw + evidence com nomes dos módulos
 - ✅ Baseado em rsync-list-modules.nse
 
+### ✅ US-8 — SSH (22/tcp) 
+**Objetivo**: Identificar MACs inseguros durante handshake SSH
+**Implementação**: `/internal/probes/ssh.go`
+- ✅ Given porta 22 aberta
+- ✅ When probe extrai MACs durante handshake SSH 
+- ✅ Then vuln=true se MACs fracos detectados (MD5, SHA1-96)
+- ✅ Evidence registra MACs fracos encontrados
+- ✅ Baseado em guias de hardening SSH
+
 ## 🏗️ User Stories de Plataforma - TODAS IMPLEMENTADAS
 
 ### ✅ US-P1: Entrada REST

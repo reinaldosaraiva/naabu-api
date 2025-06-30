@@ -28,6 +28,7 @@ const (
 	ProbeTypeLDAP  ProbeType = "ldap"
 	ProbeTypePPTP  ProbeType = "pptp"
 	ProbeTypeRsync ProbeType = "rsync"
+	ProbeTypeSSH   ProbeType = "ssh"
 )
 
 // ScanRequest representa a requisição de scan
@@ -208,6 +209,11 @@ type PPTPProbeConfig struct {
 type RsyncProbeConfig struct {
 	ProbeConfig
 	TestModules bool `json:"test_modules"`
+}
+
+type SSHProbeConfig struct {
+	ProbeConfig
+	TestWeakMACs bool `json:"test_weak_macs"`
 }
 
 // Migration helpers
