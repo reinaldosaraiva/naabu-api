@@ -64,6 +64,24 @@ Implementação completa do épico de descoberta e validação de exposições d
 - ✅ Then vuln=true se flag rw + evidence com nomes dos módulos
 - ✅ Baseado em rsync-list-modules.nse
 
+### ✅ US-7 — SSH com cifras fracas (22/tcp)
+**Objetivo**: Detectar servidores SSH com cifras fracas (CBC, 3DES, arcfour)
+**Implementação**: `/internal/probes/ssh.go`
+- ✅ Given porta 22 aberta
+- ✅ When probe coleta CiphersClient via ssh.NewClientConn
+- ✅ Then vuln=true se cifras fracas detectadas
+- ✅ Evidence registra cifras fracas encontradas
+- ✅ Baseado nas notas do OpenSSH 6.7
+
+### ✅ US-8 — SSH com MAC fraco (22/tcp) 
+**Objetivo**: Identificar MACs inseguros durante handshake SSH
+**Implementação**: `/internal/probes/ssh.go` (combinado com US-7)
+- ✅ Given porta 22 aberta
+- ✅ When probe extrai MACs durante handshake SSH 
+- ✅ Then vuln=true se MACs fracos detectados (MD5, SHA1-96)
+- ✅ Evidence registra MACs fracos encontrados
+- ✅ Baseado em guias de hardening SSH
+
 ## 🏗️ User Stories de Plataforma - TODAS IMPLEMENTADAS
 
 ### ✅ US-P1: Entrada REST

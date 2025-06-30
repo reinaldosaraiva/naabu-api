@@ -211,6 +211,11 @@ type RsyncProbeConfig struct {
 	TestModules bool `json:"test_modules"`
 }
 
+type SSHProbeConfig struct {
+	ProbeConfig
+	TestWeakMACs bool `json:"test_weak_macs"`
+}
+
 // Migration helpers
 func (ScanJob) TableName() string {
 	return "scan_jobs"

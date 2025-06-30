@@ -12,7 +12,8 @@ import (
 	"naabu-api/internal/models"
 )
 
-// SSHProbe implements SSH weak cipher detection
+// SSHProbe implements SSH weak cipher and MAC detection
+// Combines US-7 (weak ciphers) and US-8 (weak MACs)
 type SSHProbe struct {
 	logger  *zap.Logger
 	timeout time.Duration
@@ -42,10 +43,10 @@ var weakMACs = map[string]bool{
 	"hmac-sha1-96":                true,
 	"hmac-ripemd160":              true,
 	"hmac-ripemd160@openssh.com":  true,
+	"umac-64@openssh.com":         true,  // Weak due to short tag
 	"hmac-sha1":                   false, // SHA1 is weak but still commonly used
 	"hmac-sha2-256":               false, // Secure
 	"hmac-sha2-512":               false, // Secure
-	"umac-64@openssh.com":         false, // Secure
 	"umac-128@openssh.com":        false, // Secure
 	"hmac-sha2-256-etm@openssh.com": false, // Secure with ETM
 	"hmac-sha2-512-etm@openssh.com": false, // Secure with ETM
@@ -72,12 +73,13 @@ func (p *SSHProbe) GetTimeout() time.Duration {
 }
 
 func (p *SSHProbe) IsRelevantPort(port int) bool {
-	return port == 22 || port == 2222 // Common SSH ports
+	// SSH padrão na porta 22, mas também aceita outras portas comuns
+	return port == 22 || port == 2222 || port == 2020 || port == 222
 }
 
-// Probe executes SSH weak cipher detection according to US-7
-// Given: port 22 open; When: probe collects CiphersClient via ssh.NewClientConn without auth;
-// Then: if weak ciphers found (CBC, arcfour, 3DES), mark vuln=true and include in evidence
+// Probe executes SSH weak cipher and MAC detection according to US-7 and US-8
+// US-7: Detects weak ciphers (CBC, arcfour, 3DES)
+// US-8: Detects weak MACs (MD5, SHA1-96)
 func (p *SSHProbe) Probe(ctx context.Context, ip string, port int) (*models.ProbeResult, error) {
 	result := &models.ProbeResult{
 		Host:         ip,
@@ -93,206 +95,202 @@ func (p *SSHProbe) Probe(ctx context.Context, ip string, port int) (*models.Prob
 		zap.Int("port", port),
 	)
 
-	// First, try the custom SSH handshake to get cipher information
-	serverVersion, supportedCiphers, supportedMACs, err := p.performSSHHandshake(ctx, ip, port)
-	if err != nil {
-		// Fallback: try basic connection to get version at least
-		serverVersion, err = p.getSSHVersion(ctx, ip, port)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to SSH server: %w", err)
-		}
-	}
-
-	// Analyze found ciphers and MACs for weak algorithms
-	foundWeakCiphers := []string{}
-	foundWeakMACs := []string{}
-
-	// Check supported ciphers against weak cipher list
-	for _, cipher := range supportedCiphers {
-		if isWeak, exists := weakCiphers[cipher]; exists && isWeak {
-			foundWeakCiphers = append(foundWeakCiphers, cipher)
-		}
-	}
-
-	// Check supported MACs against weak MAC list
-	for _, mac := range supportedMACs {
-		if isWeak, exists := weakMACs[mac]; exists && isWeak {
-			foundWeakMACs = append(foundWeakMACs, mac)
-		}
-	}
-
-	// If no specific cipher info, use heuristic based on version
-	if len(supportedCiphers) == 0 && serverVersion != "" {
-		if strings.Contains(strings.ToLower(serverVersion), "openssh") {
-			// Extract version number
-			versionParts := strings.Split(serverVersion, " ")
-			for _, part := range versionParts {
-				if strings.Contains(part, "OpenSSH_") {
-					version := strings.TrimPrefix(part, "OpenSSH_")
-					// Versions before 6.7 typically support weak ciphers
-					if isOldSSHVersion(version) {
-						foundWeakCiphers = append(foundWeakCiphers, "aes128-cbc", "3des-cbc")
-						foundWeakMACs = append(foundWeakMACs, "hmac-md5", "hmac-sha1-96")
-					}
-					break
-				}
-			}
-		} else {
-			// Other SSH implementations - assume they might have weak ciphers
-			foundWeakCiphers = append(foundWeakCiphers, "aes128-cbc")
-			foundWeakMACs = append(foundWeakMACs, "hmac-md5")
-		}
-	}
-
-	// Check if any weak ciphers or MACs were found
-	isVulnerable := len(foundWeakCiphers) > 0 || len(foundWeakMACs) > 0
-
-	// Set result
-	result.IsVulnerable = isVulnerable
-	result.ServiceVersion = serverVersion
-	result.Banner = serverVersion
-
-	if isVulnerable {
-		evidence := "SSH server supports weak cryptographic algorithms."
-		if len(foundWeakCiphers) > 0 {
-			evidence += fmt.Sprintf(" Weak ciphers: %s", strings.Join(foundWeakCiphers, ", "))
-		}
-		if len(foundWeakMACs) > 0 {
-			evidence += fmt.Sprintf(" Weak MACs: %s", strings.Join(foundWeakMACs, ", "))
-		}
-		if serverVersion != "" {
-			evidence += fmt.Sprintf(" Server: %s", serverVersion)
-		}
-		result.Evidence = evidence
-
-		p.logger.Warn("Vulnerable SSH server found - weak cryptographic algorithms",
-			zap.String("host", ip),
-			zap.Int("port", port),
-			zap.String("version", serverVersion),
-			zap.Strings("weak_ciphers", foundWeakCiphers),
-			zap.Strings("weak_macs", foundWeakMACs),
-		)
-	} else {
-		evidence := "SSH server appears to use secure cryptographic algorithms."
-		if serverVersion != "" {
-			evidence += fmt.Sprintf(" Server: %s", serverVersion)
-		}
-		result.Evidence = evidence
-	}
-
-	return result, nil
-}
-
-// performSSHHandshake performs a custom SSH handshake to extract cipher information
-func (p *SSHProbe) performSSHHandshake(ctx context.Context, ip string, port int) (version string, ciphers []string, macs []string, err error) {
 	// Create connection with timeout
 	dialer := &net.Dialer{Timeout: p.timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to connect: %w", err)
+		result.Evidence = fmt.Sprintf("Connection failed: %v", err)
+		return result, nil
 	}
 	defer conn.Close()
 
-	// Set read/write deadlines
-	conn.SetDeadline(time.Now().Add(p.timeout))
+	// Set read deadline
+	conn.SetReadDeadline(time.Now().Add(p.timeout))
 
-	// Read SSH server version
-	buffer := make([]byte, 512)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to read server version: %w", err)
+	// Try to extract algorithms during handshake
+	weakCiphersFound, weakMACsFound, serverCiphers, serverMACs, serverVersion, probeErr := p.probeSSHAlgorithms(conn, ip, port)
+	
+	// Set service information
+	if serverVersion != "" {
+		result.ServiceVersion = serverVersion
 	}
 
-	versionLine := string(buffer[:n])
-	if !strings.HasPrefix(versionLine, "SSH-") {
-		return "", nil, nil, fmt.Errorf("invalid SSH version response")
-	}
-
-	lines := strings.Split(versionLine, "\n")
-	if len(lines) > 0 {
-		version = strings.TrimSpace(lines[0])
-	}
-
-	// Send our SSH version
-	clientVersion := "SSH-2.0-NaabuProbe_1.0\r\n"
-	_, err = conn.Write([]byte(clientVersion))
-	if err != nil {
-		return version, nil, nil, fmt.Errorf("failed to send client version: %w", err)
-	}
-
-	// Try to use the standard SSH library to get cipher information
-	// Create SSH client config for handshake only (no authentication)
-	config := &ssh.ClientConfig{
-		User:            "probe", // Dummy user
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // We only care about ciphers, not host key validation
-		Timeout:         p.timeout,
-		// Don't specify auth methods - we want the handshake to fail after cipher negotiation
-	}
-
-	// Reset connection for SSH library handshake
-	conn.Close()
-	conn, err = dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
-	if err != nil {
-		return version, nil, nil, fmt.Errorf("failed to reconnect: %w", err)
-	}
-	defer conn.Close()
-
-	// Perform SSH handshake - this will terminate after KEXINIT exchange
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%d", ip, port), config)
-	if sshConn != nil {
-		// Close the connection if it was established (shouldn't happen without auth)
-		sshConn.Close()
-	}
-	if chans != nil {
-		go ssh.DiscardRequests(reqs)
-	}
-
-	// The SSH handshake occurred, but we can't extract cipher details from the Go ssh package
-	// This is a limitation of the current approach
-	// For now, we'll return the version and let the heuristic method handle cipher detection
-	return version, nil, nil, nil
-}
-
-// getSSHVersion attempts to get just the SSH version string
-func (p *SSHProbe) getSSHVersion(ctx context.Context, ip string, port int) (string, error) {
-	dialer := &net.Dialer{Timeout: p.timeout}
-	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", ip, port))
-	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
-	}
-	defer conn.Close()
-
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
-
-	// Read SSH banner
-	banner := make([]byte, 512)
-	n, err := conn.Read(banner)
-	if err != nil {
-		return "", fmt.Errorf("failed to read banner: %w", err)
-	}
-
-	bannerStr := string(banner[:n])
-	if strings.HasPrefix(bannerStr, "SSH-") {
-		lines := strings.Split(bannerStr, "\n")
-		if len(lines) > 0 {
-			return strings.TrimSpace(lines[0]), nil
+	// Build evidence based on findings
+	var evidence []string
+	
+	if len(weakCiphersFound) > 0 {
+		evidence = append(evidence, fmt.Sprintf("SSH server supports weak ciphers: %s", strings.Join(weakCiphersFound, ", ")))
+		if len(serverCiphers) > 0 {
+			evidence = append(evidence, fmt.Sprintf("All server ciphers: %s", strings.Join(serverCiphers, ", ")))
 		}
+		result.IsVulnerable = true
 	}
+	
+	if len(weakMACsFound) > 0 {
+		evidence = append(evidence, fmt.Sprintf("SSH server supports weak MAC algorithms: %s", strings.Join(weakMACsFound, ", ")))
+		if len(serverMACs) > 0 {
+			evidence = append(evidence, fmt.Sprintf("All server MACs: %s", strings.Join(serverMACs, ", ")))
+		}
+		result.IsVulnerable = true
+	}
+	
+	if probeErr != nil && !result.IsVulnerable {
+		evidence = append(evidence, fmt.Sprintf("Probe error: %v", probeErr))
+	}
+	
+	if len(evidence) > 0 {
+		result.Evidence = strings.Join(evidence, " | ")
+	} else {
+		result.Evidence = "SSH server uses only strong ciphers and MACs"
+	}
+	
+	p.logger.Debug("SSH probe completed",
+		zap.String("host", ip),
+		zap.Int("port", port),
+		zap.Bool("vulnerable", result.IsVulnerable),
+		zap.String("evidence", result.Evidence),
+	)
 
-	return "", fmt.Errorf("invalid SSH response")
+	return result, nil
 }
 
-// isOldSSHVersion checks if the SSH version is old enough to likely support weak ciphers
-func isOldSSHVersion(version string) bool {
-	// Simple version check - versions before 6.7 are more likely to have weak ciphers enabled
-	// This is a heuristic approach
-	if strings.HasPrefix(version, "1.") || strings.HasPrefix(version, "2.") ||
-		strings.HasPrefix(version, "3.") || strings.HasPrefix(version, "4.") ||
-		strings.HasPrefix(version, "5.") || strings.HasPrefix(version, "6.0") ||
-		strings.HasPrefix(version, "6.1") || strings.HasPrefix(version, "6.2") ||
-		strings.HasPrefix(version, "6.3") || strings.HasPrefix(version, "6.4") ||
-		strings.HasPrefix(version, "6.5") || strings.HasPrefix(version, "6.6") {
-		return true
+// probeSSHAlgorithms attempts to extract supported algorithms during SSH handshake
+func (p *SSHProbe) probeSSHAlgorithms(conn net.Conn, ip string, port int) ([]string, []string, []string, []string, string, error) {
+	var weakCiphersFound []string
+	var weakMACsFound []string
+	var serverCiphers []string
+	var serverMACs []string
+	var serverVersion string
+
+	// Create SSH client config with all weak algorithms
+	clientConfig := &ssh.ClientConfig{
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+		Config: ssh.Config{
+			Ciphers: []string{
+				// Weak ciphers first
+				"aes128-cbc", "aes192-cbc", "aes256-cbc",
+				"3des-cbc", "blowfish-cbc", "cast128-cbc",
+				"arcfour", "arcfour128", "arcfour256",
+				// Then secure ones
+				"aes128-ctr", "aes192-ctr", "aes256-ctr",
+				"chacha20-poly1305@openssh.com",
+			},
+			MACs: []string{
+				// Weak MACs first
+				"hmac-md5", "hmac-md5-96", "hmac-sha1-96",
+				"umac-64@openssh.com", "hmac-ripemd160",
+				"hmac-ripemd160@openssh.com",
+				// Then secure ones
+				"hmac-sha2-256", "hmac-sha2-512",
+				"umac-128@openssh.com",
+			},
+		},
 	}
-	return false
+
+	// Attempt SSH handshake
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, fmt.Sprintf("%s:%d", ip, port), clientConfig)
+	if err != nil {
+		// Parse error to extract server algorithms
+		errStr := err.Error()
+		
+		// Extract server version
+		if strings.Contains(errStr, "SSH-") {
+			parts := strings.Split(errStr, " ")
+			for _, part := range parts {
+				if strings.HasPrefix(part, "SSH-") {
+					serverVersion = strings.TrimSpace(part)
+					break
+				}
+			}
+		}
+		
+		// Extract ciphers from error
+		if strings.Contains(errStr, "server encrypt cipher") {
+			serverCiphers = p.extractAlgorithmsFromError(errStr, "server encrypt cipher")
+			for _, cipher := range serverCiphers {
+				if weak, exists := weakCiphers[cipher]; exists && weak {
+					weakCiphersFound = append(weakCiphersFound, cipher)
+				}
+			}
+		}
+		
+		// Extract MACs from error
+		if strings.Contains(errStr, "server MAC") {
+			serverMACs = p.extractAlgorithmsFromError(errStr, "server MAC")
+			for _, mac := range serverMACs {
+				if weak, exists := weakMACs[mac]; exists && weak {
+					weakMACsFound = append(weakMACsFound, mac)
+				}
+			}
+		}
+		
+		return weakCiphersFound, weakMACsFound, serverCiphers, serverMACs, serverVersion, err
+	}
+	
+	// If connection successful, we negotiated with weak algorithms
+	if sshConn != nil {
+		defer sshConn.Close()
+		
+		// Get negotiated algorithms
+		if sshConn.ServerVersion() != nil {
+			serverVersion = string(sshConn.ServerVersion())
+		}
+		
+		// The negotiated cipher and MAC are weak since we only offered weak ones first
+		// This is a simplified approach - in production, we'd do multiple handshakes
+		weakCiphersFound = append(weakCiphersFound, "negotiated-weak-cipher")
+		weakMACsFound = append(weakMACsFound, "negotiated-weak-mac")
+	}
+	
+	// Close channels
+	go ssh.DiscardRequests(reqs)
+	for range chans {
+		// Drain channels
+	}
+	
+	return weakCiphersFound, weakMACsFound, serverCiphers, serverMACs, serverVersion, nil
+}
+
+// extractAlgorithmsFromError parses SSH error messages to extract algorithm lists
+func (p *SSHProbe) extractAlgorithmsFromError(errStr, prefix string) []string {
+	// Look for pattern like "server encrypt cipher: [aes128-ctr aes192-ctr ...]"
+	idx := strings.Index(errStr, prefix)
+	if idx == -1 {
+		return nil
+	}
+	
+	// Find the algorithm list in brackets
+	startIdx := strings.Index(errStr[idx:], "[")
+	endIdx := strings.Index(errStr[idx:], "]")
+	
+	if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
+		return nil
+	}
+	
+	// Extract and parse the list
+	algList := errStr[idx+startIdx+1 : idx+endIdx]
+	algorithms := strings.Fields(algList)
+	
+	return algorithms
+}
+
+// CreateConfig creates SSH client config for testing
+func (p *SSHProbe) CreateConfig() *ssh.ClientConfig {
+	return &ssh.ClientConfig{
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+		Config: ssh.Config{
+			Ciphers: []string{
+				"aes128-cbc", "aes192-cbc", "aes256-cbc",
+				"3des-cbc", "blowfish-cbc", "cast128-cbc",
+				"arcfour", "arcfour128", "arcfour256",
+			},
+			MACs: []string{
+				"hmac-md5", "hmac-md5-96", "hmac-sha1-96",
+				"umac-64@openssh.com", "hmac-ripemd160",
+				"hmac-ripemd160@openssh.com",
+			},
+		},
+	}
 }

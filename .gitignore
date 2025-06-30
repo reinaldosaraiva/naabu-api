@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+naabu-api
 
 # Test binary, built with `go test -c`
 *.test
@@ -16,6 +17,17 @@
 
 # Go workspace file
 go.work
+go.work.sum
+
+# Naabu API specific
+*.log
+*.db
+.env
+/uploads/
+/logs/
+/tmp/
+coverage.out
+coverage.html
 
 # Build artifacts
 /naabu-api

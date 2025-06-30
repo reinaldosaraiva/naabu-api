@@ -2,24 +2,26 @@ package probes
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 	"naabu-api/internal/models"
 )
 
 func TestSSHProbe_Name(t *testing.T) {
-	logger := zap.NewNop()
+	logger := zaptest.NewLogger(t)
 	probe := NewSSHProbe(logger)
 	
 	if probe.Name() != "ssh" {
-		t.Errorf("Expected probe name 'ssh', got '%s'", probe.Name())
+		t.Errorf("Expected name 'ssh', got '%s'", probe.Name())
 	}
 }
 
 func TestSSHProbe_DefaultPort(t *testing.T) {
-	logger := zap.NewNop()
+	logger := zaptest.NewLogger(t)
 	probe := NewSSHProbe(logger)
 	
 	if probe.DefaultPort() != 22 {
@@ -28,196 +30,230 @@ func TestSSHProbe_DefaultPort(t *testing.T) {
 }
 
 func TestSSHProbe_IsRelevantPort(t *testing.T) {
-	logger := zap.NewNop()
+	logger := zaptest.NewLogger(t)
 	probe := NewSSHProbe(logger)
 	
-	testCases := []struct {
+	tests := []struct {
 		port     int
 		expected bool
 	}{
 		{22, true},
 		{2222, true},
-		{21, false},
+		{2020, true},
+		{222, true},
 		{80, false},
 		{443, false},
+		{3389, false},
 	}
 	
-	for _, tc := range testCases {
-		result := probe.IsRelevantPort(tc.port)
-		if result != tc.expected {
-			t.Errorf("IsRelevantPort(%d): expected %t, got %t", tc.port, tc.expected, result)
+	for _, test := range tests {
+		result := probe.IsRelevantPort(test.port)
+		if result != test.expected {
+			t.Errorf("Port %d: expected %v, got %v", test.port, test.expected, result)
 		}
 	}
 }
 
 func TestSSHProbe_GetTimeout(t *testing.T) {
-	logger := zap.NewNop()
+	logger := zaptest.NewLogger(t)
 	probe := NewSSHProbe(logger)
 	
-	timeout := probe.GetTimeout()
 	expected := 30 * time.Second
-	
-	if timeout != expected {
-		t.Errorf("Expected timeout %v, got %v", expected, timeout)
+	if probe.GetTimeout() != expected {
+		t.Errorf("Expected timeout %v, got %v", expected, probe.GetTimeout())
 	}
 }
 
-func TestSSHProbe_Probe_InvalidHost(t *testing.T) {
-	logger := zap.NewNop()
+func TestSSHProbe_Probe_ConnectionFailure(t *testing.T) {
+	logger := zaptest.NewLogger(t)
 	probe := NewSSHProbe(logger)
 	
-	// Use a shorter timeout for testing
-	probe.timeout = 2 * time.Second
+	ctx := context.Background()
+	result, err := probe.Probe(ctx, "192.0.2.1", 22222)
 	
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	
-	// Test with non-existent host - use a non-routable address for faster failure
-	result, err := probe.Probe(ctx, "192.0.2.1", 22) // RFC 5737 test address
-	
-	// Should return error for connection failure
-	if err == nil {
-		t.Error("Expected error for invalid host, got nil")
-	}
-	
-	// Or should return result with connection failure evidence
-	if err == nil && result != nil && result.Evidence == "" {
-		t.Error("Expected evidence of connection failure")
-	}
-}
-
-func TestSSHProbe_Probe_Localhost(t *testing.T) {
-	logger := zap.NewNop()
-	probe := NewSSHProbe(logger)
-	
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	
-	// Test against localhost:22 - this may or may not work depending on environment
-	result, err := probe.Probe(ctx, "127.0.0.1", 22)
-	
-	// This test is optional since SSH may not be running on localhost
 	if err != nil {
-		t.Logf("SSH not available on localhost (expected in CI): %v", err)
-		return
+		t.Fatalf("Probe should not return error, got: %v", err)
 	}
 	
 	if result == nil {
-		t.Error("Expected result, got nil")
-		return
+		t.Fatal("Expected result, got nil")
 	}
 	
-	t.Logf("SSH probe result: vulnerable=%t, version=%s, evidence=%s", 
-		result.IsVulnerable, result.ServiceVersion, result.Evidence)
-	
-	// Basic validation
-	if result.ProbeType != models.ProbeTypeSSH {
-		t.Errorf("Expected probe type SSH, got %v", result.ProbeType)
+	if result.IsVulnerable {
+		t.Error("Expected IsVulnerable to be false for connection failure")
 	}
 	
-	if result.ServiceName != "ssh" {
-		t.Errorf("Expected service name 'ssh', got %s", result.ServiceName)
+	if !strings.Contains(result.Evidence, "Connection failed") {
+		t.Errorf("Expected evidence to contain 'Connection failed', got: %s", result.Evidence)
 	}
 }
 
-func TestSSHProbe_WeakCipherDetection(t *testing.T) {
-	// Test the weak cipher detection logic directly
-	testCases := []struct {
-		name            string
-		supportedCiphers []string
-		supportedMACs    []string
-		serverVersion    string
-		expectedVuln     bool
-		expectedCiphers  []string
-		expectedMACs     []string
+func TestSSHProbe_ExtractAlgorithmsFromError(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	probe := NewSSHProbe(logger)
+	
+	tests := []struct {
+		name     string
+		errStr   string
+		prefix   string
+		expected []string
 	}{
 		{
-			name:            "Modern secure ciphers",
-			supportedCiphers: []string{"aes128-ctr", "aes256-ctr", "chacha20-poly1305@openssh.com"},
-			supportedMACs:    []string{"hmac-sha2-256", "hmac-sha2-512"},
-			serverVersion:    "SSH-2.0-OpenSSH_8.0",
-			expectedVuln:     false,
-			expectedCiphers:  []string{},
-			expectedMACs:     []string{},
+			name:     "extract ciphers",
+			errStr:   "ssh: handshake failed: server encrypt cipher: [aes128-ctr aes192-ctr aes256-ctr aes128-cbc]",
+			prefix:   "server encrypt cipher",
+			expected: []string{"aes128-ctr", "aes192-ctr", "aes256-ctr", "aes128-cbc"},
 		},
 		{
-			name:            "Old SSH with weak ciphers",
-			supportedCiphers: []string{"aes128-cbc", "3des-cbc", "arcfour"},
-			supportedMACs:    []string{"hmac-md5", "hmac-sha1-96"},
-			serverVersion:    "SSH-2.0-OpenSSH_6.0",
-			expectedVuln:     true,
-			expectedCiphers:  []string{"aes128-cbc", "3des-cbc", "arcfour"},
-			expectedMACs:     []string{"hmac-md5", "hmac-sha1-96"},
+			name:     "extract MACs",
+			errStr:   "ssh: handshake failed: server MAC: [hmac-sha2-256 hmac-sha2-512 hmac-md5]",
+			prefix:   "server MAC",
+			expected: []string{"hmac-sha2-256", "hmac-sha2-512", "hmac-md5"},
 		},
 		{
-			name:            "Mixed ciphers",
-			supportedCiphers: []string{"aes128-ctr", "aes128-cbc", "aes256-ctr"},
-			supportedMACs:    []string{"hmac-sha2-256", "hmac-md5"},
-			serverVersion:    "SSH-2.0-OpenSSH_7.0",
-			expectedVuln:     true,
-			expectedCiphers:  []string{"aes128-cbc"},
-			expectedMACs:     []string{"hmac-md5"},
+			name:     "no algorithms found",
+			errStr:   "ssh: handshake failed: no common algorithm",
+			prefix:   "server encrypt cipher",
+			expected: nil,
 		},
 	}
 	
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Test cipher detection logic
-			foundWeakCiphers := []string{}
-			foundWeakMACs := []string{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := probe.extractAlgorithmsFromError(test.errStr, test.prefix)
 			
-			// Check supported ciphers against weak cipher list
-			for _, cipher := range tc.supportedCiphers {
-				if isWeak, exists := weakCiphers[cipher]; exists && isWeak {
-					foundWeakCiphers = append(foundWeakCiphers, cipher)
+			if len(result) != len(test.expected) {
+				t.Errorf("Expected %d algorithms, got %d", len(test.expected), len(result))
+				return
+			}
+			
+			for i, alg := range result {
+				if alg != test.expected[i] {
+					t.Errorf("Algorithm %d: expected %s, got %s", i, test.expected[i], alg)
 				}
-			}
-			
-			// Check supported MACs against weak MAC list
-			for _, mac := range tc.supportedMACs {
-				if isWeak, exists := weakMACs[mac]; exists && isWeak {
-					foundWeakMACs = append(foundWeakMACs, mac)
-				}
-			}
-			
-			isVulnerable := len(foundWeakCiphers) > 0 || len(foundWeakMACs) > 0
-			
-			if isVulnerable != tc.expectedVuln {
-				t.Errorf("Expected vulnerable=%t, got %t", tc.expectedVuln, isVulnerable)
-			}
-			
-			if len(foundWeakCiphers) != len(tc.expectedCiphers) {
-				t.Errorf("Expected %d weak ciphers, got %d: %v", 
-					len(tc.expectedCiphers), len(foundWeakCiphers), foundWeakCiphers)
-			}
-			
-			if len(foundWeakMACs) != len(tc.expectedMACs) {
-				t.Errorf("Expected %d weak MACs, got %d: %v", 
-					len(tc.expectedMACs), len(foundWeakMACs), foundWeakMACs)
 			}
 		})
 	}
 }
 
-func TestIsOldSSHVersion(t *testing.T) {
-	testCases := []struct {
-		version  string
-		expected bool
+func TestSSHProbe_WeakCipherDetection(t *testing.T) {
+	// Test weak cipher detection logic
+	weakCipherTests := []struct {
+		cipher string
+		isWeak bool
 	}{
-		{"6.6", true},
-		{"6.5", true},
-		{"5.3", true},
-		{"4.1", true},
-		{"6.7", false},
-		{"7.4", false},
-		{"8.0", false},
-		{"9.1", false},
+		{"aes128-cbc", true},
+		{"aes192-cbc", true},
+		{"aes256-cbc", true},
+		{"3des-cbc", true},
+		{"blowfish-cbc", true},
+		{"arcfour", true},
+		{"arcfour128", true},
+		{"arcfour256", true},
+		{"aes128-ctr", false},
+		{"aes256-ctr", false},
+		{"chacha20-poly1305@openssh.com", false},
 	}
 	
-	for _, tc := range testCases {
-		result := isOldSSHVersion(tc.version)
-		if result != tc.expected {
-			t.Errorf("isOldSSHVersion(%s): expected %t, got %t", tc.version, tc.expected, result)
+	for _, test := range weakCipherTests {
+		weak, exists := weakCiphers[test.cipher]
+		if !exists {
+			t.Errorf("Cipher %s not found in weakCiphers map", test.cipher)
+			continue
+		}
+		if weak != test.isWeak {
+			t.Errorf("Cipher %s: expected weak=%v, got %v", test.cipher, test.isWeak, weak)
+		}
+	}
+}
+
+func TestSSHProbe_WeakMACDetection(t *testing.T) {
+	// Test weak MAC detection logic
+	weakMACTests := []struct {
+		mac    string
+		isWeak bool
+	}{
+		{"hmac-md5", true},
+		{"hmac-md5-96", true},
+		{"hmac-sha1-96", true},
+		{"hmac-ripemd160", true},
+		{"umac-64@openssh.com", true},
+		{"hmac-sha2-256", false},
+		{"hmac-sha2-512", false},
+		{"umac-128@openssh.com", false},
+	}
+	
+	for _, test := range weakMACTests {
+		weak, exists := weakMACs[test.mac]
+		if !exists {
+			t.Errorf("MAC %s not found in weakMACs map", test.mac)
+			continue
+		}
+		if weak != test.isWeak {
+			t.Errorf("MAC %s: expected weak=%v, got %v", test.mac, test.isWeak, weak)
+		}
+	}
+}
+
+func TestSSHProbe_ProbeResult(t *testing.T) {
+	logger := zap.NewNop()
+	probe := NewSSHProbe(logger)
+	
+	ctx := context.Background()
+	result, err := probe.Probe(ctx, "127.0.0.1", 22)
+	
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	
+	// Verify result structure
+	if result.Host != "127.0.0.1" {
+		t.Errorf("Expected host 127.0.0.1, got %s", result.Host)
+	}
+	if result.Port != 22 {
+		t.Errorf("Expected port 22, got %d", result.Port)
+	}
+	if result.ProbeType != models.ProbeTypeSSH {
+		t.Errorf("Expected probe type %s, got %s", models.ProbeTypeSSH, result.ProbeType)
+	}
+	if result.ServiceName != "ssh" {
+		t.Errorf("Expected service name 'ssh', got %s", result.ServiceName)
+	}
+}
+
+func TestSSHProbe_CreateConfig(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	probe := NewSSHProbe(logger)
+	
+	config := probe.CreateConfig()
+	
+	if config == nil {
+		t.Fatal("Expected config, got nil")
+	}
+	
+	// Check that weak ciphers are included
+	expectedCiphers := []string{
+		"aes128-cbc", "aes192-cbc", "aes256-cbc",
+		"3des-cbc", "blowfish-cbc", "cast128-cbc",
+		"arcfour", "arcfour128", "arcfour256",
+	}
+	
+	for i, cipher := range config.Config.Ciphers {
+		if i < len(expectedCiphers) && cipher != expectedCiphers[i] {
+			t.Errorf("Cipher %d: expected %s, got %s", i, expectedCiphers[i], cipher)
+		}
+	}
+	
+	// Check that weak MACs are included
+	expectedMACs := []string{
+		"hmac-md5", "hmac-md5-96", "hmac-sha1-96",
+		"umac-64@openssh.com", "hmac-ripemd160",
+		"hmac-ripemd160@openssh.com",
+	}
+	
+	for i, mac := range config.Config.MACs {
+		if i < len(expectedMACs) && mac != expectedMACs[i] {
+			t.Errorf("MAC %d: expected %s, got %s", i, expectedMACs[i], mac)
 		}
 	}
 }
