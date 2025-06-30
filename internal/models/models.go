@@ -28,6 +28,7 @@ const (
 	ProbeTypeLDAP  ProbeType = "ldap"
 	ProbeTypePPTP  ProbeType = "pptp"
 	ProbeTypeRsync ProbeType = "rsync"
+	ProbeTypeSSH   ProbeType = "ssh"
 )
 
 // ScanRequest representa a requisição de scan
