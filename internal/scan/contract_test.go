@@ -148,7 +148,7 @@ func TestNetworkSecurityEndpointContract(t *testing.T) {
 	err = json.Unmarshal(recorder.Body.Bytes(), &response)
 	require.NoError(t, err, "Failed to parse JSON response: %s", recorder.Body.String())
 
-	// Test Contract: Verify all 8 required fields exist
+	// Test Contract: Verify all 9 required fields exist (8 original + cve_scan)
 	requiredFields := []string{
 		"ftp_anonymous_login",
 		"vnc_accessible", 
@@ -158,6 +158,7 @@ func TestNetworkSecurityEndpointContract(t *testing.T) {
 		"rsync_accessible",
 		"ssh_weak_cipher",
 		"ssh_weak_mac",
+		"cve_scan", // NEW: CVE scanning field
 	}
 
 	// Convert response to map for field checking
@@ -171,28 +172,58 @@ func TestNetworkSecurityEndpointContract(t *testing.T) {
 	for _, field := range requiredFields {
 		assert.Contains(t, responseMap, field, "Required field '%s' is missing from response", field)
 		
-		// Verify field structure
-		fieldValue, ok := responseMap[field].(map[string]interface{})
-		require.True(t, ok, "Field '%s' is not an object", field)
-		
-		// Verify status field exists and is valid enum
-		status, statusExists := fieldValue["status"].(string)
-		assert.True(t, statusExists, "Field '%s' missing 'status'", field)
-		assert.Contains(t, []string{"ok", "risk"}, status, "Field '%s' has invalid status '%s', must be 'ok' or 'risk'", field, status)
-		
-		// Verify evidence field exists
-		evidence, evidenceExists := fieldValue["evidence"]
-		assert.True(t, evidenceExists, "Field '%s' missing 'evidence'", field)
-		
-		// If status is "risk", evidence must not be empty
-		if status == "risk" {
-			switch ev := evidence.(type) {
-			case string:
-				assert.NotEmpty(t, ev, "Field '%s' with status 'risk' has empty evidence", field)
-			case []interface{}:
-				assert.NotEmpty(t, ev, "Field '%s' with status 'risk' has empty evidence array", field)
-			default:
-				t.Errorf("Field '%s' evidence is neither string nor array", field)
+		if field == "cve_scan" {
+			// Special validation for CVE scan field
+			cveFieldValue, ok := responseMap[field].(map[string]interface{})
+			require.True(t, ok, "Field 'cve_scan' is not an object")
+			
+			// Verify status field exists and is valid enum
+			status, statusExists := cveFieldValue["status"].(string)
+			assert.True(t, statusExists, "Field 'cve_scan' missing 'status'")
+			assert.Contains(t, []string{"ok", "risk", "error"}, status, "Field 'cve_scan' has invalid status '%s', must be 'ok', 'risk', or 'error'", status)
+			
+			// Verify cve_id field exists and is array
+			cveIDs, cveIDExists := cveFieldValue["cve_id"].([]interface{})
+			assert.True(t, cveIDExists, "Field 'cve_scan' missing 'cve_id'")
+			
+			// Verify evidence field exists and is array
+			_, evidenceExists := cveFieldValue["evidence"].([]interface{})
+			assert.True(t, evidenceExists, "Field 'cve_scan' missing 'evidence'")
+			
+			// If status is "risk", cve_id must not be empty
+			if status == "risk" {
+				assert.NotEmpty(t, cveIDs, "Field 'cve_scan' with status 'risk' has empty cve_id array")
+			}
+			
+			// If status is "ok", cve_id should be empty
+			if status == "ok" {
+				assert.Empty(t, cveIDs, "Field 'cve_scan' with status 'ok' should have empty cve_id array")
+			}
+			
+		} else {
+			// Standard validation for other fields
+			fieldValue, ok := responseMap[field].(map[string]interface{})
+			require.True(t, ok, "Field '%s' is not an object", field)
+			
+			// Verify status field exists and is valid enum
+			status, statusExists := fieldValue["status"].(string)
+			assert.True(t, statusExists, "Field '%s' missing 'status'", field)
+			assert.Contains(t, []string{"ok", "risk"}, status, "Field '%s' has invalid status '%s', must be 'ok' or 'risk'", field, status)
+			
+			// Verify evidence field exists
+			evidence, evidenceExists := fieldValue["evidence"]
+			assert.True(t, evidenceExists, "Field '%s' missing 'evidence'", field)
+			
+			// If status is "risk", evidence must not be empty
+			if status == "risk" {
+				switch ev := evidence.(type) {
+				case string:
+					assert.NotEmpty(t, ev, "Field '%s' with status 'risk' has empty evidence", field)
+				case []interface{}:
+					assert.NotEmpty(t, ev, "Field '%s' with status 'risk' has empty evidence array", field)
+				default:
+					t.Errorf("Field '%s' evidence is neither string nor array", field)
+				}
 			}
 		}
 	}
@@ -209,6 +240,17 @@ func TestNetworkSecurityEndpointContract(t *testing.T) {
 	assert.Equal(t, "ok", response.LDAPAccessible.Status, "LDAP should default to ok")
 	assert.Equal(t, "ok", response.PPTPAccessible.Status, "PPTP should default to ok")
 	assert.Equal(t, "ok", response.RsyncAccessible.Status, "Rsync should default to ok")
+	
+	// Test CVE scan field contract
+	assert.Contains(t, []string{"ok", "risk", "error"}, response.CVEScan.Status, "CVE scan status must be ok, risk, or error")
+	assert.NotNil(t, response.CVEScan.CVEIDs, "CVE scan cve_id must not be nil")
+	assert.NotNil(t, response.CVEScan.Evidence, "CVE scan evidence must not be nil")
+	
+	// Log CVE scan result for debugging
+	t.Logf("CVE scan result: status=%s, cve_count=%d, evidence_count=%d", 
+		response.CVEScan.Status, 
+		len(response.CVEScan.CVEIDs), 
+		len(response.CVEScan.Evidence))
 }
 
 // TestNetworkSecurityEndpointNotFound tests 404 behavior
@@ -302,6 +344,7 @@ func TestNetworkSecurityFieldContract(t *testing.T) {
 		"rsync_accessible",
 		"ssh_weak_cipher",
 		"ssh_weak_mac",
+		"cve_scan", // NEW: CVE scanning field
 	}
 
 	// Simulate a response missing a field (this would fail the contract)
@@ -324,5 +367,5 @@ func TestNetworkSecurityFieldContract(t *testing.T) {
 	
 	// This test passes because it's demonstrating the contract check logic
 	// In a real scenario, the main contract test would fail if fields were missing
-	assert.Equal(t, 8, len(expectedFields), "Should have exactly 8 required fields")
+	assert.Equal(t, 9, len(expectedFields), "Should have exactly 9 required fields (8 original + cve_scan)")
 }

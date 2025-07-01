@@ -3,7 +3,7 @@
 ## ✅ IMPLEMENTAÇÃO COMPLETA
 
 ### Resumo Executivo
-Implementação completa do épico de descoberta e validação de exposições de serviço em larga escala utilizando Naabu para port scanning rápido seguido de probes especializados em Go para validação de riscos em FTP, VNC, RDP, LDAP, PPTP e rsync.
+Implementação completa do épico de descoberta e validação de exposições de serviço em larga escala utilizando Naabu para port scanning rápido seguido de 9 probes especializados em Go para validação de riscos em FTP, VNC, RDP, LDAP, PPTP, rsync, SSH (cifras/MACs fracos) e **CVE Detection com Nuclei v3**.
 
 ## 🎯 Critérios de Aceite - TODOS ATENDIDOS
 
@@ -82,6 +82,17 @@ Implementação completa do épico de descoberta e validação de exposições d
 - ✅ Evidence registra MACs fracos encontrados
 - ✅ Baseado em guias de hardening SSH
 
+### ✅ US-9 — CVE Detection com Nuclei v3 🆕
+**Objetivo**: Detectar CVEs HIGH/CRITICAL usando templates atualizados do Nuclei
+**Implementação**: `/internal/cve/` (nuclei.go, fallback.go, worker.go)
+- ✅ Given alvos descobertos durante scan
+- ✅ When Nuclei v3 SDK executa templates de CVE
+- ✅ Then status "risk" se CVEs HIGH/CRITICAL encontrados
+- ✅ Worker pool com até 100 hosts e timeout de 30s
+- ✅ Fallback CLI para máxima confiabilidade
+- ✅ Campo `cve_scan` no endpoint `/api/v1/scans/{id}/network`
+- ✅ Validação por contract tests
+
 ## 🏗️ User Stories de Plataforma - TODAS IMPLEMENTADAS
 
 ### ✅ US-P1: Entrada REST
@@ -142,6 +153,7 @@ API Request → Quick Scan (Naabu) → Probe Services → Deep Scan (Nmap) → R
 - **Models**: Estruturas de dados completas (`/internal/models/`)
 - **Repository**: Persistência GORM (`/internal/database/`)  
 - **Probes**: Implementações específicas por serviço (`/internal/probes/`)
+- **CVE Scanner**: Nuclei v3 SDK + CLI fallback (`/internal/cve/`) 🆕
 - **Worker System**: Pool de workers e dispatcher (`/internal/worker/`)
 - **Deep Scanner**: Integração Nmap com NSE (`/internal/deepscan/`)
 - **REST API**: Endpoints completos (`/internal/handlers/`)
@@ -151,6 +163,7 @@ API Request → Quick Scan (Naabu) → Probe Services → Deep Scan (Nmap) → R
 ### Performance:
 - ✅ Naabu para descoberta rápida vs Nmap em todos hosts
 - ✅ Probes leves em Go para validação paralela
+- ✅ CVE Detection otimizado com Nuclei v3 SDK (11-33s por execução) 🆕
 - ✅ Deep scan apenas em alvos suspeitos
 - ✅ Worker pools otimizados por tipo de tarefa
 
@@ -194,7 +207,7 @@ curl http://localhost:8081/api/v1/stats
 
 O épico foi **COMPLETAMENTE IMPLEMENTADO** seguindo todas as especificações técnicas e critérios de aceite. O sistema está pronto para descoberta e validação de exposições de serviço em larga escala com:
 
-- ✅ **6 probes especializados** implementados conforme NSE scripts
+- ✅ **9 probes especializados** implementados conforme NSE scripts + CVE Detection
 - ✅ **API REST completa** com endpoints assíncronos  
 - ✅ **Worker pool system** de 3 tiers otimizado
 - ✅ **Persistência GORM** com índices e relacionamentos

@@ -43,7 +43,8 @@ curl http://localhost:8082/health
 ## 📋 Características Principais
 
 - ✅ **Port Scanning com Naabu** - Scanner rápido e eficiente
-- ✅ **8 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync, SSH (cifras fracas), SSH (MACs fracos)
+- ✅ **9 Probes de Vulnerabilidade** - FTP, VNC, RDP, LDAP, PPTP, rsync, SSH (cifras fracas), SSH (MACs fracos), CVE Detection
+- ✅ **CVE Detection com Nuclei** - Detecção automática de CVEs HIGH/CRITICAL usando templates atualizados
 - ✅ **Deep Scanning Automático** - Nmap NSE scripts quando vulnerabilidades são detectadas
 - ✅ **Suporte Completo** - IPs, hostnames e notação CIDR
 - ✅ **Worker Pools** - 3 pools especializados para máxima performance
@@ -140,6 +141,7 @@ A API detecta automaticamente as seguintes vulnerabilidades:
 | **rsync** | 873 | Módulos públicos acessíveis |
 | **SSH Cipher** | 22 | Cifras fracas (CBC, 3DES, arcfour) |
 | **SSH MAC** | 22 | MACs fracos (MD5, SHA1-96, RIPEMD) |
+| **CVE Detection** | Todas | CVEs HIGH/CRITICAL usando Nuclei templates |
 
 ## 🚨 Novo: Detecção de SSH com Algoritmos Fracos
 
@@ -348,18 +350,69 @@ curl -s http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.'
   "ssh_weak_mac": {
     "status": "ok",
     "evidence": "No SSH weak MAC vulnerabilities detected"
+  },
+  "cve_scan": {
+    "status": "ok",
+    "cve_id": [],
+    "evidence": []
   }
 }
 ```
 
-### Requisito 7: Todos os Probes Funcionando (Agora são 8!)
+## 🚨 Novo: Detecção de CVEs com Nuclei
+
+### Como funciona o CVE Detection
+
+A API agora integra o Nuclei v3 para detectar CVEs conhecidas automaticamente:
+
+```bash
+# Scan com detecção de CVE
+curl -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["example.com"],
+    "ports": "80,443,8080",
+    "enable_probes": true
+  }'
+
+# Verificar resultados de CVE
+curl http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.cve_scan'
+```
+
+### O que o CVE Scanner detecta
+
+- **Severidade**: Apenas CVEs HIGH e CRITICAL
+- **Templates**: Usa templates oficiais do Nuclei atualizados
+- **Rate Limiting**: Máximo 100 requests/segundo
+- **Timeout**: 30 segundos por execução
+- **Worker Pool**: Até 100 hosts simultâneos
+
+### Exemplo de Resultado com CVE
+
+```json
+{
+  "cve_scan": {
+    "status": "risk",
+    "cve_id": ["CVE-2021-44228", "CVE-2022-0001"],
+    "evidence": ["URL: https://example.com:443", "URL: https://example.com:8080"]
+  }
+}
+```
+
+### Estados do CVE Scan
+
+- **`"ok"`**: Nenhum CVE encontrado
+- **`"risk"`**: CVEs HIGH/CRITICAL detectados
+- **`"error"`**: Falha na execução (timeout, erro de rede)
+
+### Requisito 7: Todos os 9 Probes Funcionando
 
 ```bash
 # Criar arquivo com alvos de teste para cada probe
 cat > test_all_probes.sh << 'EOF'
 #!/bin/bash
 
-echo "=== Testando todos os 8 probes ==="
+echo "=== Testando todos os 9 probes ==="
 
 # FTP Probe (porta 21)
 echo -e "\n1. Testando FTP..."
@@ -408,6 +461,12 @@ echo -e "\n8. Testando SSH Weak MACs..."
 curl -s -X POST http://localhost:8082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["gitlab.com"], "ports": "22", "enable_probes": true}'
+
+# CVE Detection Probe (todas as portas)
+echo -e "\n9. Testando CVE Detection..."
+curl -s -X POST http://localhost:8082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["example.com"], "ports": "80,443,8080", "enable_probes": true}'
 
 echo -e "\n\nTodos os scans criados! Use 'curl http://localhost:8082/api/v1/jobs' para ver status"
 EOF

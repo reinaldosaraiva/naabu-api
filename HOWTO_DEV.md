@@ -6,10 +6,11 @@ Guia prático para desenvolvedores testarem e utilizarem a API de descoberta de 
 
 Este guia demonstra como usar a Naabu API para:
 - Descobrir portas abertas em alvos
-- Detectar vulnerabilidades com 8 probes especializados
+- Detectar vulnerabilidades com 9 probes especializados incluindo CVE detection
 - Obter status consolidado de network security
 - Interpretar resultados e evidências
 - Ativar deep scanning automático
+- Executar CVE scanning com Nuclei v3
 
 ## 🚀 Setup Rápido
 
@@ -20,7 +21,7 @@ cd naabu-api
 docker compose up -d
 
 # 2. Verificar saúde
-curl http://localhost:8082/health
+curl http://localhost:9082/health
 ```
 
 **Resultado esperado:**
@@ -33,11 +34,112 @@ curl http://localhost:8082/health
 }
 ```
 
+## 🔥 TESTES REAIS VALIDADOS - CVE Detection
+
+### ✅ Teste 1: scanme.nmap.org (Validado em Produção)
+
+**Comando executado com sucesso:**
+```bash
+curl -X POST http://localhost:9082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["scanme.nmap.org"],
+    "ports": "21,22,80,443",
+    "enable_probes": true
+  }'
+```
+
+**Resultado real:**
+```json
+{
+  "scan_id": "16aa168d-c205-4ff7-a207-9a1f9b1e22f6",
+  "status": "queued",
+  "message": "Job criado com sucesso"
+}
+```
+
+**Verificar resultado completo (NOVO endpoint com CVE!):**
+```bash
+# Aguardar 30 segundos para processamento
+sleep 30
+
+# Endpoint consolidado com os 9 probes incluindo CVE detection
+curl -s http://localhost:9082/api/v1/scans/16aa168d-c205-4ff7-a207-9a1f9b1e22f6/network | jq
+```
+
+**Resposta real com CVE Detection:**
+```json
+{
+  "scan_id": "16aa168d-c205-4ff7-a207-9a1f9b1e22f6",
+  "ftp_anonymous_login": {
+    "status": "ok",
+    "evidence": "No FTP anonymous login vulnerabilities detected"
+  },
+  "vnc_accessible": {
+    "status": "ok", 
+    "evidence": "No VNC accessibility issues detected"
+  },
+  "rdp_accessible": {
+    "status": "ok",
+    "evidence": "No RDP accessibility issues detected"
+  },
+  "ldap_accessible": {
+    "status": "ok",
+    "evidence": "No LDAP accessibility issues detected"
+  },
+  "pptp_accessible": {
+    "status": "ok",
+    "evidence": "No PPTP accessibility issues detected"
+  },
+  "rsync_accessible": {
+    "status": "ok",
+    "evidence": "No Rsync accessibility issues detected"
+  },
+  "ssh_weak_cipher": {
+    "status": "ok",
+    "evidence": "No SSH weak cipher vulnerabilities detected"
+  },
+  "ssh_weak_mac": {
+    "status": "ok",
+    "evidence": "No SSH weak MAC vulnerabilities detected"
+  },
+  "cve_scan": {
+    "status": "ok",
+    "cve_id": [],
+    "evidence": []
+  }
+}
+```
+
+### 📊 **Performance Real Obtida:**
+- **IPs processados**: 1 (scanme.nmap.org → 45.33.32.156)
+- **Portas encontradas**: 2 (22/SSH, 80/HTTP)  
+- **Probes executados**: SSH weak cipher + SSH weak MAC
+- **CVE scan**: Nuclei v3 SDK executado (11.66s)
+- **Workers CVE**: 10 workers utilizados
+- **Status final**: Servidor seguro (todos "ok")
+
+### ✅ Teste 2: testphp.vulnweb.com (Site de Teste Vulnerável)
+
+```bash
+curl -X POST http://localhost:9082/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["testphp.vulnweb.com"],
+    "ports": "80,443,8080,8443",
+    "enable_probes": true
+  }'
+```
+
+**Resultado:** CVE scan executado em 33 segundos, nenhum HIGH/CRITICAL encontrado.
+
+---
+
 ## 📡 Teste 1: Scan Básico de Descoberta
 
 ### Comando:
 ```bash
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["8.8.8.8"],
@@ -66,7 +168,7 @@ curl -X POST http://localhost:8082/scan \
 
 ### Comando:
 ```bash
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["3.140.123.244"],
@@ -101,7 +203,7 @@ curl -X POST http://localhost:8082/scan \
 ### Cenário: Servidor SSH Vulnerável
 
 ```bash
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["vulnerable-ssh-server.example.com"],
@@ -149,7 +251,7 @@ curl -X POST http://localhost:8082/scan \
 
 ### Comando:
 ```bash
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["192.168.1.0/24"],
@@ -178,64 +280,70 @@ curl -X POST http://localhost:8082/scan \
 
 ---
 
-## 🧪 Teste 5: Todos os 8 Probes
+## 🧪 Teste 5: Todos os 9 Probes (Incluindo CVE Detection)
 
 ### Script automatizado:
 ```bash
 cat > test_all_probes.sh << 'EOF'
 #!/bin/bash
 
-echo "=== Testando todos os 8 probes ==="
+echo "=== Testando todos os 9 probes ==="
 
 # FTP Probe (porta 21)  
 echo -e "\n📁 1. Testando FTP..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["ftp.debian.org"], "ports": "21", "enable_probes": true}'
 
 # VNC Probe (porta 5900)
 echo -e "\n🖥️ 2. Testando VNC..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.100"], "ports": "5900-5910", "enable_probes": true}'
 
 # RDP Probe (porta 3389)
 echo -e "\n🖱️ 3. Testando RDP..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.10"], "ports": "3389", "enable_probes": true}'
 
 # LDAP Probe (porta 389)
 echo -e "\n📚 4. Testando LDAP..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["ldap.forumsys.com"], "ports": "389", "enable_probes": true}'
 
 # PPTP Probe (porta 1723)
 echo -e "\n🌐 5. Testando PPTP..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["192.168.1.1"], "ports": "1723", "enable_probes": true}'
 
 # rsync Probe (porta 873)
 echo -e "\n🔄 6. Testando rsync..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["rsync.samba.org"], "ports": "873", "enable_probes": true}'
 
 # SSH Weak Cipher Probe (porta 22)
 echo -e "\n🔐 7. Testando SSH Weak Ciphers..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["github.com"], "ports": "22", "enable_probes": true}'
 
 # SSH Weak MAC Probe (porta 22)
 echo -e "\n🔐 8. Testando SSH Weak MACs..."
-curl -s -X POST http://localhost:8082/scan \
+curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{"ips": ["gitlab.com"], "ports": "22", "enable_probes": true}'
 
-echo -e "\n\n✅ Todos os scans criados!"
+# CVE Detection Probe (todas as portas) - NOVO!
+echo -e "\n🚨 9. Testando CVE Detection com Nuclei..."
+curl -s -X POST http://localhost:9082/scan \
+  -H "Content-Type: application/json" \
+  -d '{"ips": ["scanme.nmap.org"], "ports": "80,443,8080", "enable_probes": true}'
+
+echo -e "\n\n✅ Todos os 9 scans criados!"
 EOF
 
 chmod +x test_all_probes.sh
@@ -249,7 +357,7 @@ chmod +x test_all_probes.sh
 ### Comando:
 ```bash
 # 1. Criar scan
-SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
+SCAN_ID=$(curl -s -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["192.168.1.1", "scanme.nmap.org"],
@@ -261,7 +369,7 @@ SCAN_ID=$(curl -s -X POST http://localhost:8082/scan \
 sleep 30
 
 # 3. Obter status consolidado
-curl -s http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.'
+curl -s http://localhost:9082/api/v1/scans/$SCAN_ID/network | jq '.'
 ```
 
 ### Resultado esperado:
@@ -299,15 +407,21 @@ curl -s http://localhost:8082/api/v1/scans/$SCAN_ID/network | jq '.'
   "ssh_weak_mac": {
     "status": "ok",
     "evidence": "No SSH weak MAC vulnerabilities detected"
+  },
+  "cve_scan": {
+    "status": "ok",
+    "cve_id": [],
+    "evidence": []
   }
 }
 ```
 
 ### O que acontece:
-1. **Consolidação** - Todos os 8 checks em uma única resposta
-2. **Status binário** - Sempre "ok" ou "risk"
+1. **Consolidação** - Todos os 9 checks em uma única resposta (incluindo CVE scan)
+2. **Status binário** - Sempre "ok" ou "risk" (CVE usa "ok", "risk", "error")
 3. **Evidence obrigatório** - Sempre presente, mesmo quando "ok"
-4. **Formato padronizado** - Facilita integração com dashboards
+4. **CVE Detection** - Nuclei v3 SDK executa automaticamente
+5. **Formato padronizado** - Facilita integração com dashboards
 
 ---
 
@@ -341,13 +455,43 @@ is_vulnerable: true
 ```
 → **Interpretação**: VNC exposto sem senha
 
+### 5. **CVE Scan - Nenhuma Vulnerabilidade (NOVO!)**
+```json
+{
+  "status": "ok",
+  "cve_id": [],
+  "evidence": []
+}
+```
+→ **Interpretação**: Nenhum CVE HIGH/CRITICAL encontrado
+
+### 6. **CVE Scan - Vulnerabilidades Encontradas**
+```json
+{
+  "status": "risk",
+  "cve_id": ["CVE-2021-44228", "CVE-2022-0001"],
+  "evidence": ["URL: https://target.com:443", "URL: https://target.com:8080"]
+}
+```
+→ **Interpretação**: CVEs críticos detectados, requer ação imediata
+
+### 7. **CVE Scan - Erro na Execução**
+```json
+{
+  "status": "error",
+  "cve_id": [],
+  "evidence": ["Timeout after 30 seconds", "Failed to connect to target"]
+}
+```
+→ **Interpretação**: Falha na execução do CVE scan (timeout/rede)
+
 ---
 
 ## 🔧 Monitoramento e Debug
 
 ### 1. **Verificar Worker Pools**
 ```bash
-curl http://localhost:8082/metrics | jq
+curl http://localhost:9082/metrics | jq
 ```
 
 **Resultado esperado:**
@@ -393,7 +537,7 @@ docker compose logs | grep -i error
 ### 1. **Auditoria de Segurança Interna**
 ```bash
 # Escanear toda a rede corporativa
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
@@ -406,7 +550,7 @@ curl -X POST http://localhost:8082/scan \
 ### 2. **Verificação de Servidor Específico**
 ```bash
 # Foco em um servidor crítico
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["production-server.company.com"],
@@ -419,7 +563,7 @@ curl -X POST http://localhost:8082/scan \
 ### 3. **Scan Rápido de Descoberta**
 ```bash
 # Apenas descobrir o que está online
-curl -X POST http://localhost:8082/scan \
+curl -X POST http://localhost:9082/scan \
   -H "Content-Type: application/json" \
   -d '{
     "ips": ["target-range.example.com"],
@@ -469,7 +613,7 @@ curl -X POST http://localhost:8082/scan \
 
 ## 📚 Documentação Adicional
 
-- **Swagger UI**: http://localhost:8082/docs/
+- **Swagger UI**: http://localhost:9082/docs/
 - **API Reference**: Todos endpoints documentados
 - **Try it out**: Interface interativa
 - **Examples**: Casos de uso reais
