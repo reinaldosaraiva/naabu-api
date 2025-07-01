@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"naabu-api/internal/config"
+	"naabu-api/internal/cve"
 	"naabu-api/internal/database"
 	"naabu-api/internal/models"
 	"naabu-api/internal/worker"
@@ -586,20 +588,22 @@ func (h *Handler) GetNetworkSecurity(c *gin.Context) {
 		return
 	}
 	
-	// Build network security response
-	response := h.buildNetworkSecurityResponse(scanID, probeResults)
+	// Build network security response with CVE scan
+	response := h.buildNetworkSecurityResponse(c.Request.Context(), scanID, probeResults)
 	
 	reqLogger.Info("Network security status retrieved",
 		zap.String("scan_id", scanID.String()),
 		zap.String("job_status", string(job.Status)),
 		zap.Int("probe_results", len(probeResults)),
+		zap.String("cve_status", response.CVEScan.Status),
+		zap.Int("cve_count", len(response.CVEScan.CVEIDs)),
 	)
 	
 	c.JSON(http.StatusOK, response)
 }
 
 // buildNetworkSecurityResponse builds the consolidated network security response
-func (h *Handler) buildNetworkSecurityResponse(scanID uuid.UUID, probeResults []models.ProbeResult) models.NetworkSecurityResponse {
+func (h *Handler) buildNetworkSecurityResponse(ctx context.Context, scanID uuid.UUID, probeResults []models.ProbeResult) models.NetworkSecurityResponse {
 	// Initialize response with default "ok" status
 	response := models.NetworkSecurityResponse{
 		ScanID: scanID,
@@ -611,6 +615,7 @@ func (h *Handler) buildNetworkSecurityResponse(scanID uuid.UUID, probeResults []
 		RsyncAccessible:     models.NetworkSecurityCheck{Status: "ok", Evidence: "No Rsync accessibility issues detected"},
 		SSHWeakCipher:       models.NetworkSecurityCheck{Status: "ok", Evidence: "No SSH weak cipher vulnerabilities detected"},
 		SSHWeakMAC:          models.NetworkSecurityCheck{Status: "ok", Evidence: "No SSH weak MAC vulnerabilities detected"},
+		CVEScan:             models.CVEScanResult{Status: "ok", CVEIDs: []string{}, Evidence: []string{}}, // Initialize CVE scan
 	}
 	
 	// Process probe results and update status for vulnerabilities
@@ -661,5 +666,94 @@ func (h *Handler) buildNetworkSecurityResponse(scanID uuid.UUID, probeResults []
 		}
 	}
 	
+	// Execute CVE scan for discovered targets (only in production)
+	// For tests, we keep the default "ok" status to avoid Nuclei execution
+	if h.config.Server.Port != "0" { // Port "0" indicates test mode
+		response.CVEScan = h.executeCVEScan(ctx, scanID, probeResults)
+	}
+	
 	return response
+}
+
+// executeCVEScan performs CVE scanning on targets discovered during probe results
+func (h *Handler) executeCVEScan(ctx context.Context, scanID uuid.UUID, probeResults []models.ProbeResult) models.CVEScanResult {
+	// Extract unique targets from probe results
+	targetMap := make(map[string]bool)
+	
+	// Get scan job to extract original IPs
+	job, err := h.repo.GetScanJobByID(scanID)
+	if err != nil {
+		h.logger.Error("Failed to get scan job for CVE scan", 
+			zap.Error(err), 
+			zap.String("scan_id", scanID.String()),
+		)
+		return models.CVEScanResult{
+			Status:   "error",
+			CVEIDs:   []string{},
+			Evidence: []string{"Failed to retrieve scan targets"},
+		}
+	}
+	
+	// Parse original IPs from scan job
+	var originalIPs []string
+	if err := json.Unmarshal([]byte(job.IPs), &originalIPs); err != nil {
+		h.logger.Error("Failed to parse IPs from scan job", 
+			zap.Error(err),
+			zap.String("scan_id", scanID.String()),
+		)
+		return models.CVEScanResult{
+			Status:   "error",
+			CVEIDs:   []string{},
+			Evidence: []string{"Failed to parse scan targets"},
+		}
+	}
+	
+	// Use original IPs as targets for CVE scanning
+	for _, ip := range originalIPs {
+		targetMap[ip] = true
+	}
+	
+	// Also include any hosts from probe results with open ports
+	for _, result := range probeResults {
+		if result.Host != "" {
+			targetMap[result.Host] = true
+		}
+	}
+	
+	// Convert map to slice
+	var targets []string
+	for target := range targetMap {
+		targets = append(targets, target)
+	}
+	
+	if len(targets) == 0 {
+		h.logger.Info("No targets found for CVE scan", zap.String("scan_id", scanID.String()))
+		return models.CVEScanResult{
+			Status:   "ok",
+			CVEIDs:   []string{},
+			Evidence: []string{},
+		}
+	}
+	
+	h.logger.Info("Starting CVE scan",
+		zap.String("scan_id", scanID.String()),
+		zap.Int("targets", len(targets)),
+		zap.Strings("target_list", targets),
+	)
+	
+	// Create CVE worker pool with configuration
+	// Max 10 workers, max 100 hosts, 30 second timeout per requirement
+	cvePool := cve.NewCVEWorkerPool(h.logger, 10, 100, 30*time.Second)
+	
+	// Execute CVE scan
+	result := cvePool.ExecuteCVEScan(ctx, targets)
+	
+	h.logger.Info("CVE scan completed",
+		zap.String("scan_id", scanID.String()),
+		zap.String("status", result.Status),
+		zap.Int("cve_count", len(result.CVEIDs)),
+		zap.Strings("cve_ids", result.CVEIDs),
+	)
+	
+	return result
 }

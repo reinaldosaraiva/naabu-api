@@ -6,10 +6,10 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-API_URL="http://localhost:8082"
+API_URL="http://localhost:9082"
 
 echo -e "${YELLOW}========================================${NC}"
-echo -e "${YELLOW}TESTE DOS 6 REQUISITOS DO ÉPICO${NC}"
+echo -e "${YELLOW}TESTE DOS 7 REQUISITOS DO ÉPICO (incluindo CVE Detection)${NC}"
 echo -e "${YELLOW}========================================${NC}"
 
 echo -e "\n${GREEN}Teste 1: API aceita hosts e retorna scan_id com status running${NC}"
@@ -126,5 +126,28 @@ cat > test_probe_targets.json << 'EOF'
   }
 }
 EOF
+
+echo -e "\n${GREEN}Teste 7: CVE Detection com Nuclei v3 (NOVO!)${NC}"
+echo "Testando CVE detection em targets reais..."
+
+echo -e "\n7.1 Testando CVE scan com scanme.nmap.org:"
+CVE_RESPONSE=$(curl -s -X POST $API_URL/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ips": ["scanme.nmap.org"],
+    "ports": "80,443,8080",
+    "enable_probes": true
+  }')
+echo "$CVE_RESPONSE" | jq '.'
+CVE_SCAN_ID=$(echo "$CVE_RESPONSE" | jq -r '.scan_id')
+
+echo -e "\n${YELLOW}Aguardando 35 segundos para processamento do CVE scan...${NC}"
+sleep 35
+
+echo -e "\n7.2 Verificando resultado do CVE scan no endpoint consolidado:"
+curl -s $API_URL/api/v1/scans/$CVE_SCAN_ID/network | jq '{
+  scan_id: .scan_id,
+  cve_scan: .cve_scan
+}'
 
 echo -e "\n${YELLOW}Testes preparados. Execute os próximos testes manualmente ou continue o script.${NC}"

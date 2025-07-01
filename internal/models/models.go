@@ -223,6 +223,13 @@ type NetworkSecurityCheck struct {
 	Evidence interface{} `json:"evidence"` // string or array
 }
 
+// CVEScanResult represents the result of CVE scanning using Nuclei
+type CVEScanResult struct {
+	Status   string   `json:"status"`   // "ok" | "risk" | "error"
+	CVEIDs   []string `json:"cve_id"`   // Lista de CVEs encontrados
+	Evidence []string `json:"evidence"` // Evidências (URLs, banners limitados)
+}
+
 // NetworkSecurityResponse represents the consolidated network security status
 type NetworkSecurityResponse struct {
 	ScanID              uuid.UUID             `json:"scan_id"`
@@ -234,6 +241,7 @@ type NetworkSecurityResponse struct {
 	RsyncAccessible     NetworkSecurityCheck  `json:"rsync_accessible"`
 	SSHWeakCipher       NetworkSecurityCheck  `json:"ssh_weak_cipher"`
 	SSHWeakMAC          NetworkSecurityCheck  `json:"ssh_weak_mac"`
+	CVEScan             CVEScanResult         `json:"cve_scan"`
 }
 
 // Migration helpers
