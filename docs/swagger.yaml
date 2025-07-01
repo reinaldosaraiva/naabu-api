@@ -6,7 +6,8 @@ info:
     
     ## Funcionalidades
     - Port scanning com Naabu
-    - Detecção de vulnerabilidades com 8 probes especializados
+    - Detecção de vulnerabilidades com 9 probes especializados
+    - CVE Detection automático com Nuclei v3 SDK
     - Deep scanning automático com Nmap NSE
     - Suporte a IPs, hostnames e notação CIDR
     
@@ -19,6 +20,7 @@ info:
     - **rsync**: Identifica módulos rsync acessíveis
     - **SSH Cipher**: Detecta SSH com cifras fracas (CBC, 3DES, arcfour)
     - **SSH MAC**: Detecta SSH com MACs fracos (MD5, SHA1-96, RIPEMD)
+    - **CVE Detection**: Detecta CVEs HIGH/CRITICAL usando Nuclei v3 templates
   version: 2.0.0
   contact:
     name: API Support
@@ -28,8 +30,10 @@ info:
     url: https://opensource.org/licenses/MIT
 
 servers:
+  - url: http://localhost:9082
+    description: Local development server (updated port)
   - url: http://localhost:8082
-    description: Local development server
+    description: Local development server (legacy)
   - url: http://localhost:8080
     description: Docker container
 
@@ -170,9 +174,9 @@ paths:
     get:
       summary: Status consolidado de network security
       description: |
-        Retorna o status consolidado de todos os 8 checks de network security
-        para um scan específico. Cada check retorna status "ok" ou "risk" com
-        evidências detalhadas.
+        Retorna o status consolidado de todos os 9 checks de network security
+        para um scan específico. Inclui CVE Detection automático com Nuclei v3.
+        Cada check retorna status "ok" ou "risk" com evidências detalhadas.
       operationId: getNetworkSecurity
       tags:
         - Scanning
@@ -218,6 +222,10 @@ paths:
                 ssh_weak_mac:
                   status: "ok"
                   evidence: "No SSH weak MAC vulnerabilities detected"
+                cve_scan:
+                  status: "ok"
+                  cve_id: []
+                  evidence: []
         '400':
           description: ID de scan inválido
           content:
@@ -420,7 +428,7 @@ components:
       properties:
         probe_type:
           type: string
-          enum: [ftp, vnc, rdp, ldap, pptp, rsync, ssh_weak_cipher, ssh_weak_mac]
+          enum: [ftp, vnc, rdp, ldap, pptp, rsync, ssh_weak_cipher, ssh_weak_mac, cve]
         port:
           type: integer
         is_vulnerable:
@@ -478,6 +486,8 @@ components:
           $ref: '#/components/schemas/NetworkSecurityCheck'
         ssh_weak_mac:
           $ref: '#/components/schemas/NetworkSecurityCheck'
+        cve_scan:
+          $ref: '#/components/schemas/CVEScanResult'
       required:
         - scan_id
         - ftp_anonymous_login
@@ -488,6 +498,7 @@ components:
         - rsync_accessible
         - ssh_weak_cipher
         - ssh_weak_mac
+        - cve_scan
 
     NetworkSecurityCheck:
       type: object
@@ -505,6 +516,28 @@ components:
           description: Evidência detalhada do resultado
       required:
         - status
+        - evidence
+
+    CVEScanResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, risk, error]
+          description: Status do CVE scan
+        cve_id:
+          type: array
+          items:
+            type: string
+          description: Lista de CVE IDs encontrados (apenas HIGH/CRITICAL)
+        evidence:
+          type: array
+          items:
+            type: string
+          description: Evidências dos CVEs encontrados (URLs, descrições)
+      required:
+        - status
+        - cve_id
         - evidence
 
   securitySchemes:
