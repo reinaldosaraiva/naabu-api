@@ -17,7 +17,6 @@ build: ## Compila o aplicativo
 clean: ## Remove arquivos de build
 	@echo "Cleaning build directory..."
 	@rm -rf $(BUILD_DIR)
-	@go clean
 
 test: test-unit test-integration ## Executa todos os testes
 
@@ -95,15 +94,15 @@ docker-logs: ## Mostra logs do container
 
 docker-compose-up: ## Inicia serviços com docker-compose
 	@echo "Starting services with docker-compose..."
-	@docker-compose up -d
+	@docker compose up -d
 
 docker-compose-down: ## Para serviços com docker-compose
 	@echo "Stopping services with docker-compose..."
-	@docker-compose down
+	@docker compose down
 
 docker-compose-logs: ## Mostra logs do docker-compose
 	@echo "Showing docker-compose logs..."
-	@docker-compose logs -f
+	@docker compose logs -f
 
 help: ## Mostra esta ajuda
 	@echo "Available commands:"
