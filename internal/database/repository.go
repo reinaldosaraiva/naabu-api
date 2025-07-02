@@ -39,6 +39,10 @@ type Repository interface {
 	GetDeepScanArtifactsByHost(host string) ([]models.DeepScanArtifact, error)
 	GetDeepScanArtifactsByType(artifactType string) ([]models.DeepScanArtifact, error)
 
+	// Listing and pagination
+	ListScanJobs(req models.ListScansRequest) (*models.ListScansResponse, error)
+	GetScanJobSummaryByID(scanID uuid.UUID) (*models.ScanJobSummary, error)
+
 	// Stats and monitoring
 	GetJobStats() (*models.JobStats, error)
 	
@@ -321,4 +325,136 @@ func JobStatusResponseFromScanJob(job *models.ScanJob) (*models.JobStatusRespons
 	}
 
 	return response, nil
+}
+
+// ListScanJobs retrieves paginated list of scan jobs with filtering and sorting
+func (r *repository) ListScanJobs(req models.ListScansRequest) (*models.ListScansResponse, error) {
+	// Set defaults
+	if req.Limit <= 0 || req.Limit > 100 {
+		req.Limit = 20
+	}
+	if req.Offset < 0 {
+		req.Offset = 0
+	}
+	if req.SortBy == "" {
+		req.SortBy = "created_at"
+	}
+	
+	// Build query
+	query := r.db.Model(&models.ScanJob{})
+	
+	// Apply filters
+	if req.Status != "" {
+		query = query.Where("status = ?", req.Status)
+	}
+	
+	// Count total items
+	var totalItems int64
+	if err := query.Count(&totalItems).Error; err != nil {
+		return nil, fmt.Errorf("failed to count scan jobs: %w", err)
+	}
+	
+	// Apply sorting
+	sortOrder := "ASC"
+	if req.SortDesc {
+		sortOrder = "DESC"
+	}
+	query = query.Order(req.SortBy + " " + sortOrder)
+	
+	// Apply pagination
+	query = query.Limit(req.Limit).Offset(req.Offset)
+	
+	// Fetch data
+	var jobs []models.ScanJob
+	if err := query.Find(&jobs).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch scan jobs: %w", err)
+	}
+	
+	// Convert to summaries
+	summaries := make([]models.ScanJobSummary, len(jobs))
+	for i, job := range jobs {
+		summary, err := r.scanJobToSummary(&job)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert job to summary: %w", err)
+		}
+		summaries[i] = *summary
+	}
+	
+	// Calculate pagination info
+	currentPage := (req.Offset / req.Limit) + 1
+	totalPages := int((totalItems + int64(req.Limit) - 1) / int64(req.Limit))
+	
+	pagination := models.PaginationInfo{
+		CurrentPage: currentPage,
+		PerPage:     req.Limit,
+		TotalItems:  totalItems,
+		TotalPages:  totalPages,
+		HasNext:     currentPage < totalPages,
+		HasPrev:     currentPage > 1,
+	}
+	
+	return &models.ListScansResponse{
+		Scans:      summaries,
+		Pagination: pagination,
+	}, nil
+}
+
+// GetScanJobSummaryByID retrieves a scan job summary by scan ID
+func (r *repository) GetScanJobSummaryByID(scanID uuid.UUID) (*models.ScanJobSummary, error) {
+	var job models.ScanJob
+	err := r.db.Where("scan_id = ?", scanID).First(&job).Error
+	if err != nil {
+		return nil, err
+	}
+	
+	return r.scanJobToSummary(&job)
+}
+
+// scanJobToSummary converts a ScanJob to ScanJobSummary with calculated fields
+func (r *repository) scanJobToSummary(job *models.ScanJob) (*models.ScanJobSummary, error) {
+	// Parse IPs from JSON string
+	var ips []string
+	if err := json.Unmarshal([]byte(job.IPs), &ips); err != nil {
+		// Fallback: try as single string
+		ips = []string{job.IPs}
+	}
+	
+	summary := &models.ScanJobSummary{
+		ID:          job.ID,
+		ScanID:      job.ScanID,
+		Status:      job.Status,
+		IPs:         ips,
+		Ports:       job.Ports,
+		CreatedAt:   job.CreatedAt,
+		UpdatedAt:   job.UpdatedAt,
+		CompletedAt: job.CompletedAt,
+	}
+	
+	// Calculate duration if completed
+	if job.CompletedAt != nil {
+		duration := job.CompletedAt.Sub(job.CreatedAt).Milliseconds()
+		summary.Duration = &duration
+	}
+	
+	// Extract error summary (first 100 chars)
+	if job.Error != "" {
+		errorSummary := job.Error
+		if len(errorSummary) > 100 {
+			errorSummary = errorSummary[:97] + "..."
+		}
+		summary.ErrorSummary = errorSummary
+	}
+	
+	// Parse results for summary stats
+	if job.Results != "" {
+		var scanResponse models.ScanResponse
+		if err := json.Unmarshal([]byte(job.Results), &scanResponse); err == nil {
+			summary.TotalPorts = scanResponse.Summary.TotalPorts
+			summary.OpenPorts = scanResponse.Summary.OpenPorts
+			summary.VulnerablePorts = scanResponse.Summary.VulnerablePorts
+			summary.ProbesRun = scanResponse.Summary.ProbesRun
+		}
+	}
+	
+	return summary, nil
 }

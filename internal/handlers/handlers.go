@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // Handler gerencia as requisições HTTP com Gin
@@ -756,4 +757,86 @@ func (h *Handler) executeCVEScan(ctx context.Context, scanID uuid.UUID, probeRes
 	)
 	
 	return result
+}
+
+// ListScans handles GET /api/v1/scans - List all scans with pagination and filtering
+func (h *Handler) ListScans(c *gin.Context) {
+	var req models.ListScansRequest
+	
+	// Bind query parameters
+	if err := c.ShouldBindQuery(&req); err != nil {
+		h.logger.Error("Invalid query parameters", zap.Error(err))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "Invalid query parameters",
+			Details: err.Error(),
+		})
+		return
+	}
+	
+	// Get scans from repository
+	response, err := h.repo.ListScanJobs(req)
+	if err != nil {
+		h.logger.Error("Failed to list scan jobs", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to retrieve scan jobs",
+		})
+		return
+	}
+	
+	h.logger.Info("Listed scan jobs",
+		zap.Int("count", len(response.Scans)),
+		zap.String("status_filter", req.Status),
+		zap.Int("limit", req.Limit),
+		zap.Int("offset", req.Offset),
+	)
+	
+	c.JSON(http.StatusOK, response)
+}
+
+// GetScanByID handles GET /api/v1/scans/:id - Get detailed scan information by ID
+func (h *Handler) GetScanByID(c *gin.Context) {
+	scanIDStr := c.Param("id")
+	
+	scanID, err := uuid.Parse(scanIDStr)
+	if err != nil {
+		h.logger.Error("Invalid scan ID format", zap.String("scan_id", scanIDStr), zap.Error(err))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid scan ID format",
+		})
+		return
+	}
+	
+	// Get scan job from repository
+	job, err := h.repo.GetScanJobByID(scanID)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{
+				Error: "Scan not found",
+			})
+			return
+		}
+		
+		h.logger.Error("Failed to get scan job", zap.String("scan_id", scanID.String()), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to retrieve scan job",
+		})
+		return
+	}
+	
+	// Convert to detailed response
+	response, err := database.JobStatusResponseFromScanJob(job)
+	if err != nil {
+		h.logger.Error("Failed to convert scan job to response", zap.String("scan_id", scanID.String()), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error: "Failed to process scan job data",
+		})
+		return
+	}
+	
+	h.logger.Info("Retrieved scan job details",
+		zap.String("scan_id", scanID.String()),
+		zap.String("status", string(response.Status)),
+	)
+	
+	c.JSON(http.StatusOK, response)
 }

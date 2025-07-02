@@ -123,7 +123,14 @@ func main() {
 	router.POST("/scan", handler.CreateScanJob)
 	router.GET("/health", handler.HealthHandler)
 	router.GET("/metrics", handler.MetricsHandler)
-	router.GET("/api/v1/scans/:id/network", handler.GetNetworkSecurity)
+	
+	// API v1 routes
+	api := router.Group("/api/v1")
+	{
+		api.GET("/scans", handler.ListScans)              // List all scans with pagination
+		api.GET("/scans/:id", handler.GetScanByID)        // Get detailed scan by ID
+		api.GET("/scans/:id/network", handler.GetNetworkSecurity) // Get network security results
+	}
 	
 	// Swagger documentation
 	router.Static("/docs", "./docs")

@@ -244,6 +244,50 @@ type NetworkSecurityResponse struct {
 	CVEScan             CVEScanResult         `json:"cve_scan"`
 }
 
+// ListScansRequest represents query parameters for listing scans
+type ListScansRequest struct {
+	Status   string `form:"status" json:"status,omitempty"`     // Filter by status
+	Limit    int    `form:"limit" json:"limit,omitempty"`       // Number of items per page (default: 20, max: 100)
+	Offset   int    `form:"offset" json:"offset,omitempty"`     // Starting position (default: 0)
+	SortBy   string `form:"sort_by" json:"sort_by,omitempty"`   // Sort field (default: created_at)
+	SortDesc bool   `form:"sort_desc" json:"sort_desc,omitempty"` // Sort direction (default: true)
+}
+
+// ListScansResponse represents the response for listing scans
+type ListScansResponse struct {
+	Scans      []ScanJobSummary `json:"scans"`
+	Pagination PaginationInfo   `json:"pagination"`
+}
+
+// ScanJobSummary represents a summary of a scan job for listing
+type ScanJobSummary struct {
+	ID          uint       `json:"id"`
+	ScanID      uuid.UUID  `json:"scan_id"`
+	Status      JobStatus  `json:"status"`
+	IPs         []string   `json:"ips"`
+	Ports       string     `json:"ports,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+	Duration    *int64     `json:"duration_ms,omitempty"` // milliseconds
+	ErrorSummary string    `json:"error_summary,omitempty"`
+	// Summary stats
+	TotalPorts      int `json:"total_ports,omitempty"`
+	OpenPorts       int `json:"open_ports,omitempty"`
+	VulnerablePorts int `json:"vulnerable_ports,omitempty"`
+	ProbesRun       int `json:"probes_run,omitempty"`
+}
+
+// PaginationInfo represents pagination metadata
+type PaginationInfo struct {
+	CurrentPage int   `json:"current_page"`
+	PerPage     int   `json:"per_page"`
+	TotalItems  int64 `json:"total_items"`
+	TotalPages  int   `json:"total_pages"`
+	HasNext     bool  `json:"has_next"`
+	HasPrev     bool  `json:"has_prev"`
+}
+
 // Migration helpers
 func (ScanJob) TableName() string {
 	return "scan_jobs"
