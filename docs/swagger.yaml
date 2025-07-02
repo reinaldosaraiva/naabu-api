@@ -170,6 +170,152 @@ paths:
                   cancelled: 0
                 timestamp: "2025-06-29T18:30:00Z"
 
+  /api/v1/scans:
+    get:
+      summary: Listar todos os scans
+      description: |
+        Retorna uma lista paginada de todos os scans com suporte a filtros e ordenação.
+        Inclui informações resumidas de cada scan como status, duração, IPs, portas e estatísticas.
+      operationId: listScans
+      tags:
+        - Scanning
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [queued, running, completed, failed, cancelled]
+          description: Filtrar por status do scan
+          example: completed
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Número de itens por página
+          example: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Posição inicial (para paginação)
+          example: 0
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, status, id]
+            default: created_at
+          description: Campo para ordenação
+          example: created_at
+        - name: sort_desc
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: Ordenação decrescente
+          example: true
+      responses:
+        '200':
+          description: Lista de scans
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListScansResponse'
+              example:
+                scans:
+                  - id: 1
+                    scan_id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: "completed"
+                    ips: ["192.168.1.1", "example.com"]
+                    ports: "80,443,22"
+                    created_at: "2025-07-02T10:30:00Z"
+                    updated_at: "2025-07-02T10:32:15Z"
+                    completed_at: "2025-07-02T10:32:15Z"
+                    duration_ms: 135000
+                    total_ports: 6
+                    open_ports: 3
+                    vulnerable_ports: 1
+                    probes_run: 2
+                pagination:
+                  current_page: 1
+                  per_page: 20
+                  total_items: 45
+                  total_pages: 3
+                  has_next: true
+                  has_prev: false
+        '400':
+          description: Parâmetros inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/scans/{scan_id}:
+    get:
+      summary: Buscar scan específico por ID
+      description: |
+        Retorna informações detalhadas de um scan específico incluindo resultados completos,
+        probe results, deep scan artifacts e estatísticas completas.
+      operationId: getScanById
+      tags:
+        - Scanning
+      parameters:
+        - name: scan_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID único do scan
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Detalhes completos do scan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+              example:
+                scan_id: "550e8400-e29b-41d4-a716-446655440000"
+                status: "completed"
+                created_at: "2025-07-02T10:30:00Z"
+                updated_at: "2025-07-02T10:32:15Z"
+                completed_at: "2025-07-02T10:32:15Z"
+                results:
+                  results:
+                    - ip: "192.168.1.1"
+                      ports:
+                        - port: 22
+                          protocol: "tcp"
+                          state: "open"
+                          service_name: "ssh"
+                  summary:
+                    total_ips: 2
+                    total_ports: 6
+                    open_ports: 3
+                    vulnerable_ports: 1
+                    probes_run: 2
+                    deep_scans_run: 0
+                    duration_ms: 135000
+                    errors: 0
+        '400':
+          description: ID do scan inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Scan não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/v1/scans/{scan_id}/network:
     get:
       summary: Status consolidado de network security
@@ -462,6 +608,112 @@ components:
           type: integer
         errors:
           type: integer
+
+    ListScansResponse:
+      type: object
+      properties:
+        scans:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScanJobSummary'
+          description: Lista de scans
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+      required:
+        - scans
+        - pagination
+
+    ScanJobSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID sequencial do banco de dados
+        scan_id:
+          type: string
+          format: uuid
+          description: ID único do scan
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+          description: Status atual do scan
+        ips:
+          type: array
+          items:
+            type: string
+          description: Lista de IPs/hostnames escaneados
+        ports:
+          type: string
+          description: String de portas escaneadas
+          example: "80,443,22-25"
+        created_at:
+          type: string
+          format: date-time
+          description: Data/hora de criação
+        updated_at:
+          type: string
+          format: date-time
+          description: Data/hora da última atualização
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Data/hora de conclusão
+        duration_ms:
+          type: integer
+          nullable: true
+          description: Duração em milissegundos (se concluído)
+        error_summary:
+          type: string
+          description: Resumo do erro (se houver)
+        total_ports:
+          type: integer
+          description: Total de portas escaneadas
+        open_ports:
+          type: integer
+          description: Número de portas abertas encontradas
+        vulnerable_ports:
+          type: integer
+          description: Número de portas vulneráveis
+        probes_run:
+          type: integer
+          description: Número de probes executados
+      required:
+        - id
+        - scan_id
+        - status
+        - ips
+        - created_at
+        - updated_at
+
+    PaginationInfo:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          description: Página atual
+        per_page:
+          type: integer
+          description: Itens por página
+        total_items:
+          type: integer
+          description: Total de itens
+        total_pages:
+          type: integer
+          description: Total de páginas
+        has_next:
+          type: boolean
+          description: Há próxima página
+        has_prev:
+          type: boolean
+          description: Há página anterior
+      required:
+        - current_page
+        - per_page
+        - total_items
+        - total_pages
+        - has_next
+        - has_prev
 
     NetworkSecurityResponse:
       type: object
