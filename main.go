@@ -121,6 +121,7 @@ func main() {
 
 	// Setup routes
 	router.POST("/scan", handler.CreateScanJob)
+	router.POST("/scan/tls", handler.TLSScanHandler)  // TLS scanning endpoint
 	router.GET("/health", handler.HealthHandler)
 	router.GET("/metrics", handler.MetricsHandler)
 	

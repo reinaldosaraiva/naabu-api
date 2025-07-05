@@ -115,6 +115,100 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /scan/tls:
+    post:
+      summary: Executar scan TLS/SSL
+      description: |
+        Executa um scan TLS/SSL nos domínios fornecidos usando tlsx.
+        Detecta certificados auto-assinados, expirados, validação de hostname,
+        versões TLS, cifras fracas e protocolos deprecados.
+      operationId: tlsScan
+      tags:
+        - Scanning
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+          description: Formato da resposta
+          example: json
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TLSScanRequest'
+            examples:
+              single-domain:
+                summary: Scan de domínio único
+                value:
+                  domains: ["example.com"]
+              multiple-domains:
+                summary: Múltiplos domínios
+                value:
+                  domains: ["example.com", "google.com", "self-signed.badssl.com"]
+      responses:
+        '200':
+          description: Scan TLS concluído
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TLSScanResponse'
+              example:
+                results:
+                  - host: "example.com"
+                    ip: "93.184.216.34"
+                    is_self_signed: false
+                    is_expired: false
+                    is_valid_hostname: true
+                    tls_versions: ["TLS1.2", "TLS1.3"]
+                    cipher: ["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"]
+                    weak_ciphers: []
+                    deprecated_protocols: []
+                  - host: "self-signed.badssl.com"
+                    ip: "104.154.89.105"
+                    is_self_signed: true
+                    is_expired: false
+                    is_valid_hostname: true
+                    tls_versions: ["TLS1.2"]
+                    cipher: ["ECDHE-RSA-AES128-GCM-SHA256"]
+                    weak_ciphers: []
+                    deprecated_protocols: []
+            text/csv:
+              schema:
+                type: string
+              example: |
+                host,ip,is_self_signed,is_expired,is_valid_hostname,tls_versions,cipher,weak_ciphers,deprecated_protocols,error
+                example.com,93.184.216.34,false,false,true,TLS1.2;TLS1.3,TLS_AES_128_GCM_SHA256;TLS_AES_256_GCM_SHA384,,,
+                self-signed.badssl.com,104.154.89.105,true,false,true,TLS1.2,ECDHE-RSA-AES128-GCM-SHA256,,,
+        '400':
+          description: Requisição inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty-domains:
+                  value:
+                    error: "'domains' field is required and cannot be empty"
+                    request_id: "req-123"
+                too-many-domains:
+                  value:
+                    error: "maximum of 100 domains allowed per request"
+                    request_id: "req-124"
+                invalid-format:
+                  value:
+                    error: "Invalid format parameter. Must be 'json' or 'csv'"
+                    request_id: "req-125"
+        '500':
+          description: Erro interno do servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /health:
     get:
       summary: Health check
@@ -791,6 +885,92 @@ components:
         - status
         - cve_id
         - evidence
+
+    TLSScanRequest:
+      type: object
+      required:
+        - domains
+      properties:
+        domains:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 100
+          description: Lista de domínios para scan TLS/SSL
+          example: ["example.com", "google.com", "self-signed.badssl.com"]
+
+    TLSScanResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TLSScanResult'
+      required:
+        - results
+
+    TLSScanResult:
+      type: object
+      properties:
+        host:
+          type: string
+          description: Hostname ou domínio escaneado
+          example: "example.com"
+        ip:
+          type: string
+          description: Endereço IP resolvido
+          example: "93.184.216.34"
+        is_self_signed:
+          type: boolean
+          description: Indica se o certificado é auto-assinado
+          example: false
+        is_expired:
+          type: boolean
+          description: Indica se o certificado está expirado
+          example: false
+        is_valid_hostname:
+          type: boolean
+          description: Indica se o hostname corresponde ao certificado
+          example: true
+        tls_versions:
+          type: array
+          items:
+            type: string
+          description: Versões TLS suportadas
+          example: ["TLS1.2", "TLS1.3"]
+        cipher:
+          type: array
+          items:
+            type: string
+          description: Lista de cifras suportadas
+          example: ["TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"]
+        weak_ciphers:
+          type: array
+          items:
+            type: string
+          description: Cifras fracas detectadas (RC4, 3DES, etc)
+          example: []
+        deprecated_protocols:
+          type: array
+          items:
+            type: string
+          description: Protocolos deprecados detectados (SSLv2, SSLv3, TLS1.0, TLS1.1)
+          example: []
+        error:
+          type: string
+          description: Mensagem de erro se o scan falhou
+          example: ""
+      required:
+        - host
+        - ip
+        - is_self_signed
+        - is_expired
+        - is_valid_hostname
+        - tls_versions
+        - cipher
+        - weak_ciphers
+        - deprecated_protocols
 
   securitySchemes:
     ApiKeyAuth:
